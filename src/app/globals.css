@@ -2,26 +2,209 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ================================================================
+   AURA ENGINE — Global Design System
+   Style: Spatial UI / Dark Fantasy
+   Fonts: Cinzel (headings) · IM Fell English (narrative/GM) · Inter (UI)
+   Palette: Warm stone black · Amber gold · Deep crimson
+   ================================================================ */
+
+/* --- Google Fonts --- */
+@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700;900&family=IM+Fell+English:ital@0;1&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+/* --- CSS Custom Properties --- */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* Core Colors */
+  --color-bg:        #0a0908;
+  --color-surface:   #131110;
+  --color-surface-2: #1c1917;
+  --color-border:    rgba(202, 138, 4, 0.12);
+  --color-text:      #c9bfa8;
+  --color-text-muted:#7c7264;
+
+  /* Accent Colors */
+  --color-torch:     #ca8a04;
+  --color-torch-glow:rgba(202, 138, 4, 0.25);
+  --color-blood:     #8a0303;
+  --color-blood-glow:rgba(138, 3, 3, 0.25);
+  --color-magic:     #6d28d9;
+  --color-parchment: #e8dcc4;
+
+  /* Shadows */
+  --shadow-card:     0 4px 24px rgba(0,0,0,0.6), 0 1px 0 rgba(255,255,255,0.03);
+  --shadow-torch:    0 0 24px -6px rgba(202,138,4,0.5);
+  --shadow-blood:    0 0 24px -6px rgba(138,3,3,0.5);
+
+  /* Transitions */
+  --ease-smooth: cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+/* --- Base Reset --- */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
 }
 
 body {
-  color: var(--foreground);
-  background: var(--background);
-  font-family: Arial, Helvetica, sans-serif;
+  color:            var(--color-text);
+  background-color: var(--color-bg);
+  background-image:
+    radial-gradient(ellipse at top,    rgba(202,138,4,0.06) 0%, transparent 55%),
+    radial-gradient(ellipse at bottom, rgba(138,3,3,0.07)   0%, transparent 55%);
+  background-attachment: fixed;
+  font-family: 'Inter', ui-sans-serif, system-ui;
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-@layer utilities {
-  .text-balance {
-    text-wrap: balance;
+/* --- Typography Hierarchy --- */
+.font-narrative {
+  font-family: 'IM Fell English', ui-serif, Georgia;
+  font-style: italic;
+}
+
+.font-display {
+  font-family: 'Cinzel', ui-serif, Georgia;
+}
+
+/* GM / AI narrative text — rendered like a manuscript */
+.gm-text {
+  font-family:   'IM Fell English', ui-serif, Georgia;
+  font-size:     1.125rem;
+  line-height:   1.9;
+  color:         var(--color-parchment);
+  letter-spacing: 0.01em;
+}
+
+/* --- Atmospheric Scrollbar --- */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: rgba(202, 138, 4, 0.2);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(202, 138, 4, 0.4);
+}
+
+/* Custom scrollbar utility class */
+.custom-scrollbar { scrollbar-width: thin; scrollbar-color: rgba(202,138,4,0.2) transparent; }
+
+/* --- Glass Card Base --- */
+.glass-card {
+  background:   rgba(19, 17, 16, 0.8);
+  border:       1px solid rgba(202, 138, 4, 0.12);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+/* --- Torch Glow Effects --- */
+.torch-glow {
+  box-shadow: var(--shadow-torch);
+}
+.blood-glow {
+  box-shadow: var(--shadow-blood);
+}
+
+/* --- Animated Ember Particles --- */
+.ember-container {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.ember {
+  position: absolute;
+  bottom: 0;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: radial-gradient(circle, #fbbf24 0%, #ca8a04 50%, transparent 100%);
+  animation: ember-rise var(--duration, 4s) var(--delay, 0s) ease-in infinite;
+  opacity: 0;
+}
+
+@keyframes ember-rise {
+  0%   { transform: translateY(0)      translateX(0)   scale(1);   opacity: 0;   }
+  5%   { opacity: 0.8; }
+  90%  { opacity: 0.5; }
+  100% { transform: translateY(-120px) translateX(var(--drift, 20px)) scale(0.3); opacity: 0; }
+}
+
+/* --- HP Bar Pulse (critical health) --- */
+@keyframes hp-critical {
+  0%, 100% { box-shadow: 0 0 4px rgba(185,28,28,0.5); }
+  50%       { box-shadow: 0 0 12px rgba(185,28,28,0.9), 0 0 20px rgba(185,28,28,0.4); }
+}
+
+.hp-critical {
+  animation: hp-critical 1.2s ease-in-out infinite;
+}
+
+/* --- Parchment Text Shimmer --- */
+@keyframes shimmer {
+  0%   { background-position: -200% center; }
+  100% { background-position: 200%  center; }
+}
+
+.text-shimmer {
+  background: linear-gradient(90deg, #ca8a04 0%, #fde68a 40%, #ca8a04 60%, #92400e 100%);
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: shimmer 4s linear infinite;
+}
+
+/* --- Page Transitions --- */
+@keyframes page-enter {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.page-enter {
+  animation: page-enter 0.4s var(--ease-smooth) forwards;
+}
+
+/* --- Parchment Card (used in GM messages) --- */
+.parchment-card {
+  background:   linear-gradient(135deg, rgba(31,27,20,0.95) 0%, rgba(20,18,15,0.98) 100%);
+  border:       1px solid rgba(202,138,4,0.18);
+  border-left:  3px solid rgba(202,138,4,0.4);
+  box-shadow:   var(--shadow-card), inset 0 0 20px rgba(202,138,4,0.03);
+}
+
+/* --- Campaign Theme Overrides (Right Panel) --- */
+[data-campaign="oakhaven-fall"]    { --campaign-color: #6b7280; }  /* Ash grey  */
+[data-campaign="leviathan-veil"]   { --campaign-color: #0891b2; }  /* Ocean teal */
+[data-campaign="eternal-flame"]    { --campaign-color: #d97706; }  /* Fire amber */
+[data-campaign="crimson-carnival"] { --campaign-color: #9333ea; }  /* Deep purple */
+[data-campaign="sand-king-tomb"]   { --campaign-color: #b45309; }  /* Desert ochre */
+
+/* --- Selection Highlight --- */
+::selection {
+  background: rgba(202, 138, 4, 0.3);
+  color: #fde68a;
+}
+
+/* --- Focus Ring (Accessibility) --- */
+*:focus-visible {
+  outline: 2px solid rgba(202, 138, 4, 0.6);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* --- Smooth Animations Preference --- */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }
