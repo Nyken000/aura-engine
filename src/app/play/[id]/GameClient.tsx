@@ -319,7 +319,7 @@ export default function GameClient({
 
     // OOC group chat — simple server action, no streaming
     if (chatTab === 'group') {
-      const res = await submitChatAction(character.id, userMessage, 'group')
+      const res = await submitChatAction(character.id, userMessage, 'group', liveSession?.id ?? null)
       if (res?.error) {
         alert(res.error)
         setEvents(prev => prev.filter(ev => ev.id !== optimisticEvent.id))

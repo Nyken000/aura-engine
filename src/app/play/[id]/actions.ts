@@ -5,7 +5,7 @@ import { evaluateActionWithGM } from '@/utils/ai/engine'
 import { getCampaignById } from '@/utils/game/campaigns'
 import { revalidatePath } from 'next/cache'
 
-export async function submitChatAction(characterId: string, content: string, type: 'adventure' | 'group' = 'adventure') {
+export async function submitChatAction(characterId: string, content: string, type: 'adventure' | 'group' = 'adventure', sessionId?: string | null) {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
 
@@ -33,8 +33,9 @@ export async function submitChatAction(characterId: string, content: string, typ
   await supabase
     .from('narrative_events')
     .insert([{
-      world_id: world.id,
+      world_id: world?.id ?? null,
       character_id: character.id,
+      session_id: sessionId ?? null,
       role: 'user',
       content: messageContent
     }])
@@ -86,7 +87,7 @@ export async function submitChatAction(characterId: string, content: string, typ
     await supabase
       .from('narrative_events')
       .insert([{
-        world_id: world.id,
+        world_id: world?.id ?? null,
         character_id: character.id,
         role: 'assistant',
         content: aiEvaluation.narrative_response,
