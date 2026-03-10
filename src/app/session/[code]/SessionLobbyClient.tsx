@@ -91,6 +91,34 @@ export default function SessionLobbyClient({
     }
   }
 
+  // Ref to always access the latest myPlayer without stale closures
+  const myPlayerRef = useRef(myPlayer)
+  useEffect(() => { myPlayerRef.current = myPlayer }, [myPlayer])
+
+  // Central redirect fn — used by both realtime and poll
+  const redirectToGame = (sessionId: string) => {
+    const myChar = myPlayerRef.current?.character_id
+    if (myChar) {
+      router.push(`/play/${myChar}?session=${sessionId}`)
+    } else {
+      // Character not yet in ref, try fetching fresh
+      const supabase = createClient()
+      supabase
+        .from('session_players')
+        .select('character_id')
+        .eq('session_id', sessionId)
+        .eq('user_id', currentUser.id)
+        .single()
+        .then(({ data }) => {
+          if (data?.character_id) {
+            router.push(`/play/${data.character_id}?session=${sessionId}`)
+          } else {
+            router.push('/dashboard')
+          }
+        })
+    }
+  }
+
   // Realtime subscription - listen for players joining/leaving and character picks
   useEffect(() => {
     const channel = supabase.channel(`session:${session.id}`)
@@ -102,7 +130,6 @@ export default function SessionLobbyClient({
         table: 'session_players',
         filter: `session_id=eq.${session.id}`,
       }, () => {
-        // Eagerly re-fetch instead of waiting for router.refresh
         refreshPlayers()
       })
       .on('postgres_changes', {
@@ -113,16 +140,8 @@ export default function SessionLobbyClient({
       }, (payload: any) => {
         const updatedSession = payload.new
         setSession(prev => ({ ...prev, ...updatedSession }))
-        // If session became active → redirect each player to their character game view
         if (updatedSession.status === 'active') {
-          // Find our player's character id from the latest players state
-          const mePlayer = players.find(p => p.user_id === currentUser.id) ?? myPlayer
-          const myChar = mePlayer?.character_id
-          if (myChar) {
-            router.push(`/play/${myChar}?session=${updatedSession.id}`)
-          } else {
-            router.push('/dashboard')
-          }
+          redirectToGame(updatedSession.id)
         }
         if (updatedSession.status === 'ended') {
           router.push('/dashboard')
@@ -130,7 +149,27 @@ export default function SessionLobbyClient({
       })
       .subscribe()
 
-    return () => { supabase.removeChannel(channel) }
+    // Polling fallback every 3s — handles cases where Realtime doesn't fire
+    const pollInterval = setInterval(async () => {
+      const { data: freshSession } = await supabase
+        .from('game_sessions')
+        .select('status, id')
+        .eq('id', session.id)
+        .single()
+      if (freshSession?.status === 'active') {
+        clearInterval(pollInterval)
+        redirectToGame(freshSession.id)
+      }
+      if (freshSession?.status === 'ended') {
+        clearInterval(pollInterval)
+        router.push('/dashboard')
+      }
+    }, 3000)
+
+    return () => {
+      supabase.removeChannel(channel)
+      clearInterval(pollInterval)
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session.id, currentUser.id])
 

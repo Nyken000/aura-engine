@@ -967,7 +967,7 @@ export default function GameClient({
             <div className="space-y-2 pt-4 border-t border-amber-900/20">
               <h3 className="font-display text-[10px] text-foreground/30 uppercase tracking-widest">Mundo Activo</h3>
               <p className="font-display text-xs text-amber-600/60">{world?.name || 'Mundo Desconocido'}</p>
-              {world.genre && (
+              {world?.genre && (
                 <p className="text-[10px] text-foreground/30 italic">{world.genre}</p>
               )}
             </div>
