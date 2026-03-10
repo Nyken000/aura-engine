@@ -74,7 +74,24 @@ export default function SessionLobbyClient({
     setTimeout(() => setCopied(false), 2000)
   }
 
-  // Realtime subscription - listen for players joining/leaving
+  // Helper: fetch fresh player list from Supabase and update state
+  const refreshPlayers = async () => {
+    const supabase = createClient()
+    const { data } = await supabase
+      .from('session_players')
+      .select('*, profiles!user_id(id, username, avatar_url), characters(id, name, stats)')
+      .eq('session_id', session.id)
+      .eq('status', 'joined')
+      .order('joined_at', { ascending: true })
+    if (data) {
+      setPlayers(data as SessionPlayer[])
+      // Also update our own player entry
+      const mine = data.find((p: any) => p.user_id === currentUser.id)
+      if (mine) setMyPlayer(mine as SessionPlayer)
+    }
+  }
+
+  // Realtime subscription - listen for players joining/leaving and character picks
   useEffect(() => {
     const channel = supabase.channel(`session:${session.id}`)
 
@@ -85,7 +102,8 @@ export default function SessionLobbyClient({
         table: 'session_players',
         filter: `session_id=eq.${session.id}`,
       }, () => {
-        router.refresh()
+        // Eagerly re-fetch instead of waiting for router.refresh
+        refreshPlayers()
       })
       .on('postgres_changes', {
         event: 'UPDATE',
@@ -95,13 +113,15 @@ export default function SessionLobbyClient({
       }, (payload: any) => {
         const updatedSession = payload.new
         setSession(prev => ({ ...prev, ...updatedSession }))
-        // If session became active, redirect to game
+        // If session became active → redirect each player to their character game view
         if (updatedSession.status === 'active') {
-          const myChar = myPlayer?.character_id
+          // Find our player's character id from the latest players state
+          const mePlayer = players.find(p => p.user_id === currentUser.id) ?? myPlayer
+          const myChar = mePlayer?.character_id
           if (myChar) {
-            router.push(`/play/${myChar}?session=${session.id}`)
+            router.push(`/play/${myChar}?session=${updatedSession.id}`)
           } else {
-            router.push(`/play?session=${session.id}`)
+            router.push('/dashboard')
           }
         }
         if (updatedSession.status === 'ended') {
@@ -111,7 +131,8 @@ export default function SessionLobbyClient({
       .subscribe()
 
     return () => { supabase.removeChannel(channel) }
-  }, [session.id, myPlayer?.character_id, router, supabase])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session.id, currentUser.id])
 
   const handleSelectCharacter = async (characterId: string) => {
     setSelecting(true)

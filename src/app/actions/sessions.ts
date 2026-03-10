@@ -147,14 +147,20 @@ export async function startGameSession(sessionId: string) {
 
   if (error) throw new Error(`Error al iniciar sesión: ${error.message}`)
 
-  // Redirect all players to the game — we redirect host, others will see via realtime
-  const { data: updatedSession } = await supabase
-    .from('game_sessions')
-    .select('invite_code')
-    .eq('id', sessionId)
+  // Get the host's character in this session to redirect them to the game
+  const { data: hostPlayer } = await supabase
+    .from('session_players')
+    .select('character_id')
+    .eq('session_id', sessionId)
+    .eq('user_id', user.id)
     .single()
-    
-  redirect(`/session/${updatedSession?.invite_code}`)
+
+  if (hostPlayer?.character_id) {
+    redirect(`/play/${hostPlayer.character_id}?session=${sessionId}`)
+  } else {
+    // Fallback: redirect to dashboard if no character was chosen
+    redirect('/dashboard')
+  }
 }
 
 // ─── kickPlayerFromSession ─────────────────────────────────────────────────
