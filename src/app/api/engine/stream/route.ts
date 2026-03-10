@@ -10,7 +10,7 @@ export async function POST(req: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
 
-  const { characterId, content } = await req.json()
+  const { characterId, content, sessionId } = await req.json()
   if (!characterId || !content) return NextResponse.json({ error: 'Faltan parámetros' }, { status: 400 })
 
   // 1. Fetch character + world
@@ -38,13 +38,43 @@ export async function POST(req: NextRequest) {
 
   const hasRuleBooks = ruleBookParts.length > 0
 
-  // 4. Fetch recent events for context (last 8 messages for this character)
-  const { data: recentEvents } = await supabase
+  // 4. Fetch recent events for context
+  // In multiplayer mode: last 12 messages from the whole session
+  // In single player: last 8 messages for this character
+  let eventsQuery = supabase
     .from('narrative_events')
     .select('*, characters(name)')
-    .eq('character_id', character.id)
     .order('created_at', { ascending: false })
-    .limit(8)
+    .limit(sessionId ? 12 : 8)
+
+  if (sessionId) {
+    eventsQuery = eventsQuery.eq('session_id', sessionId)
+  } else {
+    eventsQuery = eventsQuery.eq('character_id', character.id)
+  }
+
+  const { data: recentEvents } = await eventsQuery
+
+  // 4b. If multiplayer, fetch all session players for GM context
+  let sessionPlayersContext = ''
+  if (sessionId) {
+    const { data: sessionPlayers } = await supabase
+      .from('session_players')
+      .select('*, characters(name, stats, hp_current, hp_max, inventory), profiles!user_id(username)')
+      .eq('session_id', sessionId)
+      .eq('status', 'joined')
+
+    if (sessionPlayers && sessionPlayers.length > 0) {
+      sessionPlayersContext = `\n=== SESIÓN MULTIJUGADOR (${sessionPlayers.length} jugadores) ===\n`
+      sessionPlayers.forEach((sp: any) => {
+        const c = sp.characters
+        if (!c) return
+        const isActive = c.id === character.id ? ' (ACTIVO AHORA)' : ''
+        sessionPlayersContext += `- ${sp.profiles?.username}${isActive}: ${c.name} | ${c.stats?.race} ${c.stats?.class} | HP ${c.hp_current}/${c.hp_max}\n`
+      })
+      sessionPlayersContext += '===\n'
+    }
+  }
 
   const historyText = (recentEvents ?? []).reverse().map((evt: any) =>
     `[${evt.role.toUpperCase()}${evt.characters?.name ? ` - ${evt.characters.name}` : ''}]: ${evt.content}`
@@ -59,6 +89,33 @@ export async function POST(req: NextRequest) {
     ===
   ` : ''
 
+  // 5. Semantic Search (RAG) for D&D Rules
+  // Generate embedding for the player's action
+  let dndRulesContext = ''
+  try {
+    const embedRes = await genAI.getGenerativeModel({ model: 'gemini-embedding-001' }).embedContent(content)
+    const embedding = embedRes.embedding?.values
+    
+    if (embedding) {
+      // Find top 3 most relevant D&D rules
+      const { data: rules } = await supabase.rpc('match_dnd_knowledge', {
+        query_embedding: embedding,
+        match_threshold: 0.5, // 0.5 is a safe threshold for inner product with normalized vectors
+        match_count: 3
+      })
+
+      if (rules && rules.length > 0) {
+        dndRulesContext = `\n=== REGLAS OFICIALES RELEVANTES (5e) ===\nAplica estas reglas si son pertinentes a la acción del jugador:\n\n`
+        rules.forEach((r: any) => {
+          dndRulesContext += `[${r.entity_type.toUpperCase()}]: ${r.name}\n${r.content}\n\n`
+        })
+      }
+    }
+  } catch (err: any) {
+    console.error('Vector search error:', err.message)
+    // Non-fatal, engine continues without RAG if API fails
+  }
+
   const combatContext = character.combat_state?.in_combat ? `
     === COMBATE EN CURSO ===
     Turno actual de: ${character.combat_state.participants[character.combat_state.turn]?.name}
@@ -69,7 +126,7 @@ export async function POST(req: NextRequest) {
 
   const prompt = `
     Eres el Game Master de una aventura de mesa basada en D&D 5E.
-    Mundo: "${world.name}" - ${world.description}
+    Mundo: "${world?.name || 'Mundo Desconocido'}" - ${world?.description || 'Tierras misteriosas sin documentar.'}
     ${campaignContext}
     
     Personaje:
@@ -79,10 +136,13 @@ export async function POST(req: NextRequest) {
     - STR ${character.stats?.str} DEX ${character.stats?.dex} CON ${character.stats?.con} INT ${character.stats?.int} SAB ${character.stats?.wis} CAR ${character.stats?.cha}
     - Equipamiento: ${(character.inventory || []).map((i: any) => i.name).join(', ') || 'Nada'}
 
+    ${sessionPlayersContext}
     ${combatContext}
 
     HISTORIAL RECIENTE:
     ${historyText}
+
+    ${dndRulesContext}
 
     ACCIÓN DEL JUGADOR: "${content}"
 
@@ -124,12 +184,13 @@ export async function POST(req: NextRequest) {
     }
   `
 
-  // 3. Insert user message first (non-blocking)
+  // 3. Insert user message (with session_id if multiplayer)
   await supabase.from('narrative_events').insert([{
     world_id: world.id,
     character_id: character.id,
     role: 'user',
-    content
+    content,
+    ...(sessionId ? { session_id: sessionId } : {})
   }])
 
   // 4. Intercept Initiative System Rolls
@@ -295,8 +356,21 @@ export async function POST(req: NextRequest) {
             character_id: character.id,
             role: 'assistant',
             content: narrative,             // Always clean text, never raw JSON
-            dice_roll_required: diceRollRequired
-          }])
+            dice_roll_required: diceRollRequired,
+            ...(sessionId ? { session_id: sessionId } : {})
+          }]),
+          // Advance multiplayer turn after each AI response
+          ...(sessionId ? [
+            (async () => {
+              const { data: players } = await supabase
+                .from('session_players').select('user_id').eq('session_id', sessionId).eq('status', 'joined').order('joined_at', { ascending: true })
+              if (!players || players.length < 2) return
+              const { data: sess } = await supabase.from('game_sessions').select('turn_player_id').eq('id', sessionId).single()
+              const currentIdx = players.findIndex((p: any) => p.user_id === sess?.turn_player_id)
+              const nextPlayerId = players[(currentIdx + 1) % players.length].user_id
+              await supabase.from('game_sessions').update({ turn_player_id: nextPlayerId }).eq('id', sessionId)
+            })()
+          ] : [])
         ])
 
         // Signal done with extracted narrative

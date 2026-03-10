@@ -2,9 +2,10 @@ import { createClient } from '@/utils/supabase/server'
 import { getUserRole } from '@/utils/auth/roles'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
-import { Plus, Swords, Globe, Scroll, LogOut, MapPin, BookOpen, Shield } from 'lucide-react'
+import { Plus, Swords, Globe, Scroll, LogOut, MapPin, BookOpen, Shield, Users, Key } from 'lucide-react'
 import { logout } from '@/app/login/actions'
 import CharacterCard from './components/CharacterCard'
+import MultiplayerPanel from './components/MultiplayerPanel'
 
 export default async function DashboardPage() {
   const supabase = createClient()
@@ -23,6 +24,16 @@ export default async function DashboardPage() {
   const username = profile?.username || user.email?.split('@')[0] || 'Aventurero'
   const role = await getUserRole()
   const admin = role === 'admin'
+
+  // Fetch active multiplayer sessions (as host or player)
+  const { data: mySessions } = await supabase
+    .from('game_sessions')
+    .select('*, worlds(name, genre), profiles!host_id(username)')
+    .in('status', ['lobby', 'active'])
+    .or(`host_id.eq.${user.id},id.in.(${(
+      (await supabase.from('session_players').select('session_id').eq('user_id', user.id)).data?.map(p => p.session_id).join(',') || 'null'
+    )})`)
+    .order('created_at', { ascending: false })
 
   return (
     <div className="min-h-screen bg-background text-foreground relative overflow-x-hidden">
@@ -231,6 +242,15 @@ export default async function DashboardPage() {
               </Link>
             )}
           </aside>
+        </div>
+
+        {/* MULTIPLAYER SECTION */}
+        <div className="mt-10">
+          <MultiplayerPanel 
+            worlds={worlds || []} 
+            activeSessions={mySessions || []} 
+            currentUserId={user.id}
+          />
         </div>
       </main>
     </div>

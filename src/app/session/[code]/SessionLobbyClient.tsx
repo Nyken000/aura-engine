@@ -1,0 +1,367 @@
+'use client'
+
+import { useState, useEffect, useRef } from 'react'
+import { useRouter } from 'next/navigation'
+import { createClient } from '@/utils/supabase/client'
+import { 
+  Users, Copy, Check, Crown, Sword, Play, 
+  LogOut, UserMinus, ChevronRight, Wifi, 
+  Shield, Zap, Scroll
+} from 'lucide-react'
+import { startGameSession, kickPlayerFromSession, selectCharacterForSession, endGameSession } from '@/app/actions/sessions'
+
+interface SessionPlayer {
+  id: string
+  user_id: string
+  character_id: string | null
+  status: string
+  profiles: { id: string; username: string; avatar_url: string | null }
+  characters: { id: string; name: string; stats: any } | null
+}
+
+interface GameSession {
+  id: string
+  invite_code: string
+  status: string
+  host_id: string
+  max_players: number
+  turn_player_id: string | null
+  worlds: { id: string; name: string; description: string; genre: string } | null
+  profiles: { id: string; username: string }
+}
+
+interface Character {
+  id: string
+  name: string
+  stats: any
+}
+
+interface Props {
+  session: GameSession
+  sessionPlayers: SessionPlayer[]
+  myCharacters: Character[]
+  currentUser: any
+  isHost: boolean
+  myPlayer: SessionPlayer | null
+}
+
+export default function SessionLobbyClient({ 
+  session: initialSession, 
+  sessionPlayers: initialPlayers, 
+  myCharacters, 
+  currentUser, 
+  isHost, 
+  myPlayer: initialMyPlayer
+}: Props) {
+  const router = useRouter()
+  const supabase = createClient()
+  const [players, setPlayers] = useState<SessionPlayer[]>(initialPlayers)
+  const [session, setSession] = useState<GameSession>(initialSession)
+  const [myPlayer, setMyPlayer] = useState<SessionPlayer | null>(initialMyPlayer)
+  const [copied, setCopied] = useState(false)
+  const [selectedCharacterId, setSelectedCharacterId] = useState<string>(initialMyPlayer?.character_id || '')
+  const [selecting, setSelecting] = useState(false)
+  const [status, setStatus] = useState<string>('')
+
+  const inviteUrl = typeof window !== 'undefined' 
+    ? `${window.location.origin}/session/${session.invite_code}`
+    : ''
+
+  // Copy invite code to clipboard 
+  const copyInvite = async () => {
+    await navigator.clipboard.writeText(inviteUrl)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
+  // Realtime subscription - listen for players joining/leaving
+  useEffect(() => {
+    const channel = supabase.channel(`session:${session.id}`)
+
+    channel
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'session_players',
+        filter: `session_id=eq.${session.id}`,
+      }, () => {
+        router.refresh()
+      })
+      .on('postgres_changes', {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'game_sessions',
+        filter: `id=eq.${session.id}`,
+      }, (payload: any) => {
+        const updatedSession = payload.new
+        setSession(prev => ({ ...prev, ...updatedSession }))
+        // If session became active, redirect to game
+        if (updatedSession.status === 'active') {
+          const myChar = myPlayer?.character_id
+          if (myChar) {
+            router.push(`/play/${myChar}?session=${session.id}`)
+          } else {
+            router.push(`/play?session=${session.id}`)
+          }
+        }
+        if (updatedSession.status === 'ended') {
+          router.push('/dashboard')
+        }
+      })
+      .subscribe()
+
+    return () => { supabase.removeChannel(channel) }
+  }, [session.id, myPlayer?.character_id, router, supabase])
+
+  const handleSelectCharacter = async (characterId: string) => {
+    setSelecting(true)
+    try {
+      await selectCharacterForSession(session.id, characterId)
+      setSelectedCharacterId(characterId)
+    } catch (e: any) {
+      setStatus(e.message)
+    } finally {
+      setSelecting(false)
+    }
+  }
+
+  const canStart = isHost && players.length >= 1 && players.every(p => p.character_id)
+
+  const getClassIcon = (stats: any) => {
+    const cls = stats?.class?.toLowerCase() || ''
+    if (['mago', 'wizard', 'hechicero', 'sorcerer', 'bardo'].some(c => cls.includes(c))) return '🧙‍♂️'
+    if (['clérigo', 'cleric', 'paladin', 'druida'].some(c => cls.includes(c))) return '⚜️'
+    if (['guerrero', 'fighter', 'barbaro', 'barbarian'].some(c => cls.includes(c))) return '⚔️'
+    if (['pícaro', 'rogue', 'ranger'].some(c => cls.includes(c))) return '🗡️'
+    return '🎭'
+  }
+
+  return (
+    <div className="min-h-screen bg-[#0d0a07] text-[#f4e4c1] flex flex-col">
+      {/* Top Bar */}
+      <header className="border-b border-amber-900/40 bg-[#0d0a07]/90 backdrop-blur px-6 py-4 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 bg-amber-500/10 rounded-lg flex items-center justify-center border border-amber-500/30">
+            <Scroll className="w-4 h-4 text-amber-400" />
+          </div>
+          <div>
+            <h1 className="text-sm font-semibold text-amber-300">{session.worlds?.name || 'Sesión sin mundo'}</h1>
+            <p className="text-xs text-amber-900 capitalize">{session.worlds?.genre || 'Fantasía'}</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="flex items-center gap-1.5 text-xs text-emerald-400 bg-emerald-900/20 border border-emerald-700/40 rounded-full px-3 py-1">
+            <Wifi className="w-3 h-3" />
+            Sala de Espera
+          </span>
+          <span className="text-xs text-amber-700">
+            {players.length}/{session.max_players} jugadores
+          </span>
+        </div>
+      </header>
+
+      <div className="flex flex-1 max-w-6xl mx-auto w-full gap-6 p-6">
+        
+        {/* Left: Players List */}
+        <div className="flex-1 space-y-4">
+          <div className="flex items-center gap-2 mb-4">
+            <Users className="w-5 h-5 text-amber-500" />
+            <h2 className="text-lg font-bold tracking-wide">Aventureros</h2>
+            <span className="ml-auto text-xs text-amber-800">Todos deben elegir personaje para iniciar</span>
+          </div>
+
+          <div className="space-y-3">
+            {players.map(player => (
+              <div 
+                key={player.id}
+                className={`
+                  relative border rounded-xl p-4 transition-all
+                  ${player.user_id === currentUser.id 
+                    ? 'border-amber-600/60 bg-amber-950/30' 
+                    : 'border-amber-900/30 bg-stone-900/40'}
+                `}
+              >
+                <div className="flex items-center gap-4">
+                  {/* Avatar */}
+                  <div className="relative">
+                    <div className="w-12 h-12 rounded-full bg-gradient-to-br from-amber-800 to-stone-900 flex items-center justify-center border-2 border-amber-700/40 text-xl">
+                      {player.profiles?.username?.charAt(0).toUpperCase() || '?'}
+                    </div>
+                    {player.user_id === session.host_id && (
+                      <span className="absolute -top-1 -right-1 text-xs bg-amber-500 rounded-full p-0.5">
+                        <Crown className="w-2.5 h-2.5 text-stone-900" />
+                      </span>
+                    )}
+                  </div>
+                  {/* Info */}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="font-semibold text-sm text-amber-200 truncate">
+                        {player.profiles?.username || 'Anónimo'}
+                        {player.user_id === currentUser.id && (
+                          <span className="ml-2 text-xs text-amber-600">(Tú)</span>
+                        )}
+                      </span>
+                    </div>
+                    {player.characters ? (
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <span className="text-base">{getClassIcon(player.characters.stats)}</span>
+                        <span className="text-xs text-amber-400">{player.characters.name}</span>
+                        <span className="text-xs text-stone-500">
+                          {player.characters.stats?.race} {player.characters.stats?.class}
+                        </span>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-stone-500 mt-0.5 italic">Sin personaje elegido...</p>
+                    )}
+                  </div>
+                  {/* Host kick button */}
+                  {isHost && player.user_id !== currentUser.id && session.status === 'lobby' && (
+                    <button
+                      onClick={() => kickPlayerFromSession(session.id, player.user_id)}
+                      className="text-red-700 hover:text-red-500 transition-colors p-1 rounded"
+                      title="Expulsar"
+                    >
+                      <UserMinus className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+
+            {/* Empty slots */}
+            {Array.from({ length: Math.max(0, session.max_players - players.length) }).map((_, i) => (
+              <div key={`empty-${i}`} className="border border-dashed border-stone-800 rounded-xl p-4 flex items-center gap-3 opacity-40">
+                <div className="w-12 h-12 rounded-full bg-stone-900 border-2 border-stone-800" />
+                <span className="text-sm text-stone-600">Esperando jugador...</span>
+              </div>
+            ))}
+          </div>
+          
+          {status && <p className="text-red-400 text-sm mt-2">{status}</p>}
+        </div>
+
+        {/* Right: Actions Panel */}
+        <div className="w-80 space-y-4">
+          
+          {/* Invite Code */}
+          <div className="bg-stone-900/60 border border-amber-900/30 rounded-xl p-4 space-y-3">
+            <h3 className="text-sm font-semibold text-amber-300 flex items-center gap-2">
+              <Zap className="w-4 h-4" /> Código de Invitación
+            </h3>
+            <div className="bg-[#0d0a07] border border-amber-800/50 rounded-lg p-3 text-center">
+              <span className="text-3xl font-mono font-bold tracking-widest text-amber-300">
+                {session.invite_code}
+              </span>
+            </div>
+            <button
+              onClick={copyInvite}
+              className={`
+                w-full flex items-center justify-center gap-2 py-2 rounded-lg text-sm border transition-all
+                ${copied 
+                  ? 'border-emerald-700 bg-emerald-900/30 text-emerald-400' 
+                  : 'border-amber-700/50 bg-amber-950/30 text-amber-400 hover:bg-amber-900/40'}
+              `}
+            >
+              {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+              {copied ? '¡Enlace copiado!' : 'Copiar enlace de invitación'}
+            </button>
+          </div>
+
+          {/* Character Selection (for current user if not already selected) */}
+          {myCharacters.length > 0 && (
+            <div className="bg-stone-900/60 border border-amber-900/30 rounded-xl p-4 space-y-3">
+              <h3 className="text-sm font-semibold text-amber-300 flex items-center gap-2">
+                <Shield className="w-4 h-4" /> Tu Personaje
+              </h3>
+              <div className="space-y-2">
+                {myCharacters.map(char => (
+                  <button
+                    key={char.id}
+                    onClick={() => handleSelectCharacter(char.id)}
+                    disabled={selecting}
+                    className={`
+                      w-full text-left p-3 rounded-lg border transition-all text-sm
+                      ${selectedCharacterId === char.id 
+                        ? 'border-amber-500 bg-amber-950/50 text-amber-300' 
+                        : 'border-stone-700 bg-stone-900/40 text-stone-400 hover:border-amber-800 hover:text-amber-400'}
+                    `}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span>{getClassIcon(char.stats)}</span>
+                      <div>
+                        <div className="font-medium">{char.name}</div>
+                        <div className="text-xs text-stone-500">{char.stats?.race} {char.stats?.class}</div>
+                      </div>
+                      {selectedCharacterId === char.id && (
+                        <Check className="w-4 h-4 ml-auto text-amber-500" />
+                      )}
+                    </div>
+                  </button>
+                ))}
+              </div>
+              {myCharacters.length === 0 && (
+                <p className="text-xs text-stone-500 italic text-center py-2">
+                  No tienes personajes en este mundo.<br/>
+                  Crea uno primero en el Dashboard.
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* Host Controls */}
+          {isHost && session.status === 'lobby' && (
+            <div className="space-y-2">
+              <form action={startGameSession.bind(null, session.id)}>
+                <button
+                  type="submit"
+                  disabled={!canStart}
+                  className={`
+                    w-full flex items-center justify-center gap-2 py-3 rounded-xl font-bold text-sm border transition-all
+                    ${canStart
+                      ? 'border-amber-500 bg-gradient-to-r from-amber-700 to-amber-600 text-amber-100 hover:from-amber-600 hover:to-amber-500 shadow-lg shadow-amber-900/30'
+                      : 'border-stone-700 bg-stone-900/40 text-stone-600 cursor-not-allowed'}
+                  `}
+                >
+                  <Play className="w-4 h-4" />
+                  ¡Iniciar Aventura!
+                </button>
+              </form>
+              {!canStart && (
+                <p className="text-xs text-stone-600 text-center">
+                  Todos los jugadores deben elegir un personaje
+                </p>
+              )}
+              <form action={endGameSession.bind(null, session.id)}>
+                <button 
+                  type="submit"
+                  className="w-full flex items-center justify-center gap-2 py-2 rounded-lg text-sm border border-stone-700 text-stone-500 hover:border-red-900 hover:text-red-500 transition-all"
+                >
+                  <LogOut className="w-4 h-4" />
+                  Cancelar Sesión
+                </button>
+              </form>
+            </div>
+          )}
+
+          {/* Non-host: waiting message */}
+          {!isHost && session.status === 'lobby' && (
+            <div className="bg-stone-900/40 border border-stone-800 rounded-xl p-4 text-center space-y-2">
+              <div className="text-2xl">⏳</div>
+              <p className="text-sm text-stone-400">
+                Esperando a que <span className="text-amber-400">{session.profiles?.username}</span> inicie la aventura...
+              </p>
+            </div>
+          )}
+          
+          {/* World Info */}
+          <div className="bg-stone-900/40 border border-stone-800 rounded-xl p-4 space-y-2">
+            <h3 className="text-xs font-semibold text-stone-500 uppercase tracking-wider">Mundo</h3>
+            <p className="text-sm text-amber-200 font-medium">{session.worlds?.name || 'Mundo Desconocido'}</p>
+            <p className="text-xs text-stone-500 line-clamp-3">{session.worlds?.description || 'Sin descripción.'}</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}

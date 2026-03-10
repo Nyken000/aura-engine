@@ -17,5 +17,11 @@ export default async function NewCharacterPage() {
     .or(`is_public.eq.true,creator_id.eq.${user.id}`)
     .order('name')
 
-  return <CharacterCreationClient worlds={worlds || []} userId={user.id} />
+  // Fetch all available backgrounds
+  const { data: backgrounds } = await supabase
+    .from('backgrounds')
+    .select('*')
+    .order('name')
+
+  return <CharacterCreationClient worlds={worlds || []} backgrounds={backgrounds || []} userId={user.id} />
 }

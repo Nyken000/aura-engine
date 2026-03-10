@@ -20,7 +20,8 @@ const imFellEnglish = IM_Fell_English({
   weight: "400",
   style: ["normal", "italic"],
   variable: '--font-im-fell',
-  display: 'swap'
+  display: 'swap',
+  adjustFontFallback: false
 });
 
 const jetbrainsMono = JetBrains_Mono({ 

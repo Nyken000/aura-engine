@@ -20,25 +20,21 @@ export async function createCharacter(formData: FormData) {
 
   const name = formData.get('name') as string
   const background = formData.get('background') as string
+  const background_story = formData.get('background_story') as string
   let world_id = formData.get('world_id') as string
 
   // Newly added fields
   const race = formData.get('race') as string 
   const charClass = formData.get('class') as string
+  const background_id = formData.get('background_id') as string // UUID from DB table
 
   if (!name) {
     return { error: 'El nombre es requerido.' }
   }
 
-  // If no world_id was selected (it's optional in the UI), assign a random one here
-  if (!world_id) {
-    const { data: worlds } = await supabase.from('worlds').select('id')
-    if (worlds && worlds.length > 0) {
-      world_id = worlds[Math.floor(Math.random() * worlds.length)].id
-    } else {
-      return { error: 'No hay mundos disponibles para crear el personaje.' }
-    }
-  }
+  // If no world_id was selected (it's optional in the UI), we just leave it null.
+  // We no longer force a random world, which fixes the error when no worlds exist.
+  const finalWorldId = world_id ? world_id : null;
 
   // Parse stats including CON and WIS
   const stats = {
@@ -54,8 +50,8 @@ export async function createCharacter(formData: FormData) {
   const hp_current = parseInt(formData.get('hp_current') as string) || hp_max
   const hit_dice = formData.get('hit_dice') as string || '1d8'
   
-  let skills = []
-  let equipment = []
+  let skills: string[] = []
+  let equipment: string[] = []
   try {
     skills = JSON.parse(formData.get('skills') as string || '[]')
     equipment = JSON.parse(formData.get('equipment') as string || '[]')
@@ -65,10 +61,20 @@ export async function createCharacter(formData: FormData) {
 
   const specialTrait = formData.get('special_trait') as string
 
-  // Parse racial traits from form (sent by character creation UI after AI analysis)
+  // Parse racial traits and deep customization from form (sent by character creation UI after AI analysis)
   let racialTraits: string[] = []
+  let classFeatures: string[] = []
+  let classProgression: any[] = []
+  let customWeapons: any[] = []
+  let magicItems: any[] = []
+  let customSpells: any[] = []
   try {
     racialTraits = JSON.parse(formData.get('racial_traits') as string || '[]')
+    classFeatures = JSON.parse(formData.get('class_features') as string || '[]')
+    classProgression = JSON.parse(formData.get('class_progression') as string || '[]')
+    customWeapons = JSON.parse(formData.get('custom_weapons') as string || '[]')
+    magicItems = JSON.parse(formData.get('magic_items') as string || '[]')
+    customSpells = JSON.parse(formData.get('custom_spells') as string || '[]')
   } catch {}
 
   // Parse bonus overrides from AI (for custom races/classes not in static table)
@@ -94,9 +100,42 @@ export async function createCharacter(formData: FormData) {
 
   const inventoryData = [
     ...equipment.map((item: string) => ({ name: item, type: 'item' })),
+    ...customWeapons.map((w: any) => ({ name: w.name, description: w.description, damage: w.damage, properties: w.properties, type: 'weapon' })),
+    ...magicItems.map((m: any) => ({ name: m.name, description: m.effect_description, rarity: m.rarity, type: 'magic_item' })),
     ...(specialTrait ? [{ name: 'Rasgo Único', description: specialTrait, type: 'passive' }] : []),
     ...finalRacialTraits.map((trait: string) => ({ name: trait, type: 'racial' }))
   ]
+
+  // Process D&D Background
+  if (background_id) {
+    const { data: dbBackground } = await supabase.from('backgrounds').select('*').eq('id', background_id).single()
+    if (dbBackground) {
+      // Parse skills: map English SRD to Spanish UI
+      const bgSkills = (dbBackground.skill_proficiencies || []).map((s: any) => {
+        const skillName = (s.name || '').replace('Skill: ', '');
+        const map: any = { 'Insight': 'Perspicacia', 'Religion': 'Religión', 'Acrobatics': 'Acrobacias', 'Athletics': 'Atletismo', 'Deception': 'Engaño', 'History': 'Historia', 'Intimidation': 'Intimidación', 'Investigation': 'Investigación', 'Medicine': 'Medicina', 'Nature': 'Naturaleza', 'Perception': 'Percepción', 'Performance': 'Interpretación', 'Persuasion': 'Persuasión', 'Sleight of Hand': 'Juego de Manos', 'Stealth': 'Sigilo', 'Survival': 'Supervivencia', 'Animal Handling': 'Trato con Animales', 'Arcana': 'Arcano' };
+        return map[skillName] || skillName;
+      });
+      skills = Array.from(new Set(skills.concat(bgSkills)));
+
+      // Add background feature
+      if (dbBackground.feature_name) {
+        inventoryData.push({
+          name: `Trasfondo: ${dbBackground.feature_name}`,
+          description: dbBackground.feature_description,
+          type: 'passive'
+        });
+      }
+
+      // Add background equipment
+      const bgEquip = (dbBackground.starting_equipment || []).map((e: any) => {
+        const itemName = e.equipment?.name || 'Item';
+        const qty = e.quantity || 1;
+        return qty > 1 ? `${itemName} (x${qty})` : itemName;
+      });
+      inventoryData.push(...bgEquip.map((item: string) => ({ name: item, type: 'item' })));
+    }
+  }
 
   // Assign a random campaign to the character
   const assignedCampaign = getRandomCampaign()
@@ -104,7 +143,9 @@ export async function createCharacter(formData: FormData) {
   const expandedCharacterData = {
     name,
     background: background || null,
-    world_id,
+    background_story: background_story || (background && background.length > 50 ? background : null),
+    background_id: background_id || null, // foreign key back to D&D backgrounds
+    world_id: finalWorldId,
     user_id: user.id,
     hp_current,
     hp_max,
@@ -118,6 +159,9 @@ export async function createCharacter(formData: FormData) {
       race: race || 'Desconocida',
       class: charClass || 'Aventurero',
       racial_traits: finalRacialTraits,
+      class_features: classFeatures,
+      class_progression: classProgression,
+      custom_spells: customSpells,
       base_stats: stats,         // Store pre-bonus stats for reference
     }
   }
@@ -140,6 +184,8 @@ export async function createCharacter(formData: FormData) {
 
 // AI Actions that return data to the client instead of redirecting
 
+// AI Actions that return data to the client instead of redirecting
+
 export async function aiGenerateBackstory(prevState: any, formData: FormData) {
   const keywords = formData.get('keywords') as string;
   const world_id = formData.get('world_id') as string;
@@ -150,22 +196,15 @@ export async function aiGenerateBackstory(prevState: any, formData: FormData) {
 
   try {
       const supabase = createClient();
-      let world;
+      let world = null;
       
       if (world_id) {
           const { data } = await supabase.from('worlds').select('*').eq('id', world_id).single();
           world = data;
-      } else {
-          const { data } = await supabase.from('worlds').select('*');
-          if (data && data.length > 0) {
-              world = data[Math.floor(Math.random() * data.length)];
-          }
       }
       
-      if (!world) throw new Error("No hay mundos disponibles.");
-
-      const backstory = await generateLoreFriendlyBackstory(keywords, world);
-      return { success: true, text: backstory, world_id: world.id };
+      const backstory = await generateLoreFriendlyBackstory(keywords, world || undefined);
+      return { success: true, text: backstory, world_id: world ? world.id : null };
   } catch (e: any) {
       return { error: e.message || "Error al generar la historia." }
   }
@@ -181,22 +220,15 @@ export async function aiAnalyzeStory(prevState: any, formData: FormData) {
   
     try {
         const supabase = createClient();
-        let world;
+        let world = null;
         
         if (world_id) {
             const { data } = await supabase.from('worlds').select('*').eq('id', world_id).single();
             world = data;
-        } else {
-            const { data } = await supabase.from('worlds').select('*');
-            if (data && data.length > 0) {
-                world = data[Math.floor(Math.random() * data.length)];
-            }
         }
         
-        if (!world) throw new Error("No hay mundos disponibles.");
-  
-        const analysis = await analyzeStoryForStats(story, world);
-        return { success: true, data: analysis, world_id: world.id };
+        const analysis = await analyzeStoryForStats(story, world || undefined);
+        return { success: true, data: analysis, world_id: world ? world.id : null };
     } catch (e: any) {
         return { error: e.message || "Error al contactar con el Oráculo." }
     }

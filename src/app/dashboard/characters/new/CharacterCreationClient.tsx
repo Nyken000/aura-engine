@@ -1,11 +1,13 @@
 'use client'
 
 import { createCharacter, aiGenerateBackstory, aiAnalyzeStory } from './actions'
-import { Swords, ArrowLeft, Globe, Wand2, Sparkles, AlertCircle, Check, Target, Shield, Backpack, ScrollText, User, PenTool } from 'lucide-react'
+import { Swords, ArrowLeft, Globe, Wand2, Sparkles, AlertCircle, Check, Target, Shield, Backpack, ScrollText, User, PenTool, X, BookOpen } from 'lucide-react'
 import Link from 'next/link'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { getRaceBonuses, getClassBonuses, applyBonuses, type StatKey, type StatBlock } from '@/utils/game/stat-bonuses'
 import { ALL_SKILLS, isSkillProficient } from '@/utils/game/skills'
+import { RACE_DESCRIPTIONS, CLASS_DESCRIPTIONS } from '@/data/dnd/basic_descriptions'
+import { getCantripsForClass, getLevel1SpellsForClass, CLASS_SPELL_LIMITS, type CasterClass, type SpellDefinition } from '@/data/dnd/spells_level_1'
 
 const DND_RACES = [
   'Humano', 'Elfo', 'Alto Elfo', 'Elfo del Bosque', 'Elfo Oscuro', 
@@ -17,13 +19,15 @@ const DND_CLASSES = [
   'Explorador', 'Bardo', 'Brujo', 'Druida', 'Monje', 'Hechicero'
 ]
 
-export default function CharacterCreationClient({ worlds, userId }: { worlds: any[], userId: string }) {
+export default function CharacterCreationClient({ worlds, backgrounds, userId }: { worlds: any[], backgrounds: any[], userId: string }) {
   // Mode Selection State
   const [creationMode, setCreationMode] = useState<'manual' | 'story'>('manual')
+  const [activeModal, setActiveModal] = useState<'race' | 'class' | 'background' | 'oracleSpells' | null>(null)
 
   // Common State
   const [selectedWorld, setSelectedWorld] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [createError, setCreateError] = useState<string | null>(null)
   
   // -- STORY MODE STATE --
   // Pre-story info to guide AI
@@ -42,6 +46,7 @@ export default function CharacterCreationClient({ worlds, userId }: { worlds: an
   const [manualName, setManualName] = useState('')
   const [manualRace, setManualRace] = useState('')
   const [manualClass, setManualClass] = useState('')
+  const [manualBackgroundId, setManualBackgroundId] = useState('')
   const [manualStr, setManualStr] = useState(10)
   const [manualDex, setManualDex] = useState(10)
   const [manualCon, setManualCon] = useState(10)
@@ -49,6 +54,7 @@ export default function CharacterCreationClient({ worlds, userId }: { worlds: an
   const [manualWis, setManualWis] = useState(10)
   const [manualCha, setManualCha] = useState(10)
   const [manualBackstory, setManualBackstory] = useState('')
+  const [manualSelectedSpells, setManualSelectedSpells] = useState<SpellDefinition[]>([])
 
   // -- STORY MODE: GENERATE AI BACKSTORY --
   async function handleGenerateBackstory() {
@@ -126,6 +132,58 @@ export default function CharacterCreationClient({ worlds, userId }: { worlds: an
 
   // Pre-calculate full skill set for preview
   const proficientSkills = oracleResult?.skills || []
+
+  // --- ORACLE SPELL EDITING STATE ---
+  const oracleIsSpellcaster = oracleResult?.class && Object.keys(CLASS_SPELL_LIMITS).includes(oracleResult.class)
+  const oracleSpellLimits = oracleIsSpellcaster ? CLASS_SPELL_LIMITS[oracleResult.class as CasterClass] : null
+  const availableOracleCantrips = oracleIsSpellcaster ? getCantripsForClass(oracleResult.class as CasterClass) : []
+  const availableOracleLevel1Spells = oracleIsSpellcaster ? getLevel1SpellsForClass(oracleResult.class as CasterClass) : []
+  const [oracleSelectedSpells, setOracleSelectedSpells] = useState<SpellDefinition[]>([])
+  
+  // Sync initial oracle spells to state when oracleResult is generated
+  useEffect(() => {
+    if (oracleResult?.custom_spells) {
+      setOracleSelectedSpells(oracleResult.custom_spells)
+    }
+  }, [oracleResult?.custom_spells])
+
+  const toggleOracleSpell = (spell: SpellDefinition) => {
+    if (!oracleSpellLimits) return;
+    
+    setOracleSelectedSpells(prev => {
+      const isSelected = prev.some(s => s.name === spell.name);
+      if (isSelected) return prev.filter(s => s.name !== spell.name);
+      
+      // Enforce limits
+      const currentOfLevel = prev.filter(s => s.level === spell.level).length;
+      const limit = spell.level === 'Truco' ? oracleSpellLimits.cantrips : oracleSpellLimits.level_1;
+      
+      if (currentOfLevel >= limit) return prev; // Cannot add more
+      return [...prev, spell];
+    });
+  }
+
+  // --- MANUAL SPELL EDITING STATE ---
+  const isSpellcaster = manualClass && Object.keys(CLASS_SPELL_LIMITS).includes(manualClass)
+  const spellLimits = isSpellcaster ? CLASS_SPELL_LIMITS[manualClass as CasterClass] : null
+  const availableCantrips = isSpellcaster ? getCantripsForClass(manualClass as CasterClass) : []
+  const availableLevel1Spells = isSpellcaster ? getLevel1SpellsForClass(manualClass as CasterClass) : []
+
+  const toggleManualSpell = (spell: SpellDefinition) => {
+    if (!spellLimits) return;
+    
+    setManualSelectedSpells(prev => {
+      const isSelected = prev.some(s => s.name === spell.name);
+      if (isSelected) return prev.filter(s => s.name !== spell.name);
+      
+      // Enforce limits
+      const currentOfLevel = prev.filter(s => s.level === spell.level).length;
+      const limit = spell.level === 'Truco' ? spellLimits.cantrips : spellLimits.level_1;
+      
+      if (currentOfLevel >= limit) return prev; // Cannot add more
+      return [...prev, spell];
+    });
+  }
 
   return (
     <div className="min-h-screen bg-background text-foreground custom-scrollbar pb-24">
@@ -365,7 +423,13 @@ export default function CharacterCreationClient({ worlds, userId }: { worlds: an
                     return
                   }
                   setIsSubmitting(true)
-                  await createCharacter(formData)
+                  setCreateError(null)
+                  const res = await createCharacter(formData)
+                  if (res?.error) {
+                    setIsSubmitting(false)
+                    setCreateError(res.error)
+                  }
+                  // If no error, redirect happens server-side
                 }}
                 className="bg-stone-900/60 border border-white/10 p-8 rounded-2xl shadow-xl animate-in fade-in slide-in-from-bottom-4 duration-500"
               >
@@ -381,7 +445,7 @@ export default function CharacterCreationClient({ worlds, userId }: { worlds: an
 
                 <div className="space-y-8">
                   {/* Identity */}
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                     <div className="space-y-2">
                       <label className="text-sm font-bold text-foreground/70 ml-1">Nombre</label>
                       <input 
@@ -396,30 +460,106 @@ export default function CharacterCreationClient({ worlds, userId }: { worlds: an
                     </div>
                     <div className="space-y-2">
                       <label className="text-sm font-bold text-foreground/70 ml-1">Raza</label>
-                      <select 
-                        name="race"
-                        required
-                        className="w-full bg-black/50 border border-white/10 rounded-xl p-3 text-sm text-white focus:outline-none focus:border-amber-500/50"
-                        value={manualRace}
-                        onChange={e => setManualRace(e.target.value)}
+                      <button
+                        type="button"
+                        onClick={() => setActiveModal('race')}
+                        className="w-full bg-black/50 border border-white/10 rounded-xl p-3 text-sm text-left text-white hover:border-amber-500/50 hover:bg-white/5 transition-all flex justify-between items-center"
                       >
-                        <option value="">Selecciona Raza...</option>
-                        {DND_RACES.map(r => <option key={r} value={r}>{r}</option>)}
-                      </select>
+                        <span className={manualRace ? "font-bold text-amber-500" : "text-foreground/50"}>
+                          {manualRace || 'Selecciona Raza...'}
+                        </span>
+                        <ArrowLeft className="w-4 h-4 opacity-50 rotate-[-90deg]"/>
+                      </button>
                     </div>
                     <div className="space-y-2">
                       <label className="text-sm font-bold text-foreground/70 ml-1">Clase</label>
-                      <select 
-                        name="class"
-                        required
-                        className="w-full bg-black/50 border border-white/10 rounded-xl p-3 text-sm text-white focus:outline-none focus:border-amber-500/50"
-                        value={manualClass}
-                        onChange={e => setManualClass(e.target.value)}
+                      <button
+                        type="button"
+                        onClick={() => setActiveModal('class')}
+                        className="w-full bg-black/50 border border-white/10 rounded-xl p-3 text-sm text-left text-white hover:border-amber-500/50 hover:bg-white/5 transition-all flex justify-between items-center"
                       >
-                        <option value="">Selecciona Clase...</option>
-                        {DND_CLASSES.map(c => <option key={c} value={c}>{c}</option>)}
-                      </select>
+                        <span className={manualClass ? "font-bold text-blue-400" : "text-foreground/50"}>
+                          {manualClass || 'Selecciona Clase...'}
+                        </span>
+                        <ArrowLeft className="w-4 h-4 opacity-50 rotate-[-90deg]"/>
+                      </button>
                     </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-bold text-foreground/70 ml-1">Trasfondo</label>
+                      <button
+                        type="button"
+                        onClick={() => setActiveModal('background')}
+                        className="w-full bg-black/50 border border-white/10 rounded-xl p-3 text-sm text-left text-white hover:border-amber-500/50 hover:bg-white/5 transition-all flex justify-between items-center"
+                      >
+                        <span className={manualBackgroundId ? "font-bold text-purple-400" : "text-foreground/50"}>
+                          {backgrounds.find(b => b.id === manualBackgroundId)?.name || 'Selecciona Trasfondo...'}
+                        </span>
+                        <ArrowLeft className="w-4 h-4 opacity-50 rotate-[-90deg]"/>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* PREVIEWS */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {/* Race Preview */}
+                    {manualRace && RACE_DESCRIPTIONS[manualRace] && (
+                      <div className="bg-amber-900/10 border border-amber-500/30 rounded-xl p-4 opacity-90">
+                        <h4 className="font-bold text-amber-500 mb-2">{manualRace}</h4>
+                        <p className="text-xs text-foreground/70 mb-3 leading-relaxed">{RACE_DESCRIPTIONS[manualRace].flavor}</p>
+                        <div className="text-xs text-amber-500/80 font-medium bg-black/40 p-2 rounded">
+                          {RACE_DESCRIPTIONS[manualRace].mechanics}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Class Preview */}
+                    {manualClass && CLASS_DESCRIPTIONS[manualClass] && (
+                      <div className="bg-blue-900/10 border border-blue-500/30 rounded-xl p-4 opacity-90">
+                        <h4 className="font-bold text-blue-400 mb-2">{manualClass}</h4>
+                        <p className="text-xs text-foreground/70 mb-3 leading-relaxed">{CLASS_DESCRIPTIONS[manualClass].flavor}</p>
+                        <div className="text-xs text-blue-400/80 font-medium bg-black/40 p-2 rounded">
+                          <span className="block text-foreground/50 mb-1">Cualidades:</span>
+                          {CLASS_DESCRIPTIONS[manualClass].mechanics}
+                          <span className="block mt-2 text-blue-300">Rol: {CLASS_DESCRIPTIONS[manualClass].role}</span>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Background Preview */}
+                    {manualBackgroundId && (() => {
+                      const selectedBg = backgrounds.find(b => b.id === manualBackgroundId)
+                      if (!selectedBg) return null
+                      
+                      let skills: string[] = []
+                      let tools: string[] = []
+                      try { skills = typeof selectedBg.skill_proficiencies === 'string' ? JSON.parse(selectedBg.skill_proficiencies) : (selectedBg.skill_proficiencies || []) } catch(e){}
+                      try { tools = typeof selectedBg.tool_proficiencies === 'string' ? JSON.parse(selectedBg.tool_proficiencies) : (selectedBg.tool_proficiencies || []) } catch(e){}
+                      
+                      return (
+                        <div className="bg-purple-900/10 border border-purple-500/30 rounded-xl p-4 opacity-90 flex flex-col h-full">
+                          <h4 className="font-bold text-purple-400 flex items-center gap-2 mb-2"><ScrollText className="w-4 h-4"/> {selectedBg.name}</h4>
+                          <p className="text-xs text-foreground/70 mb-3 leading-relaxed">
+                            {selectedBg.description || 'Un trasfondo que moldea tu vida pasada.'}
+                          </p>
+                          
+                          {selectedBg.feature_name && (
+                            <div className="mb-3 bg-purple-900/30 border border-purple-500/20 rounded p-2">
+                              <h5 className="text-[11px] font-bold text-purple-300 uppercase tracking-wider mb-1">
+                                Rasgo: {selectedBg.feature_name}
+                              </h5>
+                              <p className="text-[10px] text-foreground/80 leading-snug">
+                                {selectedBg.feature_description}
+                              </p>
+                            </div>
+                          )}
+
+                          <div className="text-[10px] text-purple-400/80 font-medium bg-black/40 p-2 rounded space-y-1 mt-auto">
+                            {skills.length > 0 && <div><span className="text-foreground/50">Habilidades:</span> {skills.join(', ')}</div>}
+                            {tools.length > 0 && <div><span className="text-foreground/50">Herramientas:</span> {tools.join(', ')}</div>}
+                          </div>
+                        </div>
+                      )
+                    })()}
                   </div>
 
                   {/* Manual Stats Array */}
@@ -466,6 +606,84 @@ export default function CharacterCreationClient({ worlds, userId }: { worlds: an
                     />
                   </div>
                   
+                  {/* SPELL SELECTION (If Spellcaster) */}
+                  {isSpellcaster && spellLimits && (
+                    <div className="pt-6 border-t border-white/10">
+                      <div className="flex items-center justify-between mb-4">
+                        <h3 className="text-xl font-serif font-bold text-magic-400 flex items-center gap-2">
+                          <BookOpen className="w-5 h-5" /> 3. Grimorio y Magia Inicial
+                        </h3>
+                      </div>
+                      
+                      <p className="text-sm text-foreground/60 mb-6">
+                        Como <strong className="text-magic-300">{manualClass}</strong>, tienes acceso a la magia. Selecciona tus trucos y hechizos iniciales para forjar tu grimorio.
+                      </p>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                        {/* Cantrips List */}
+                        <div>
+                          <div className="flex justify-between items-end mb-3">
+                            <h4 className="font-bold text-foreground/80">Trucos (Cantrips)</h4>
+                            <span className="text-xs bg-magic-900/40 text-magic-300 px-2 py-0.5 rounded border border-magic-500/30">
+                              {manualSelectedSpells.filter(s => s.level === 'Truco').length} / {spellLimits.cantrips} Elegidos
+                            </span>
+                          </div>
+                          <div className="space-y-2 max-h-64 overflow-y-auto custom-scrollbar pr-2">
+                            {availableCantrips.map(spell => {
+                              const isSelected = manualSelectedSpells.some(s => s.name === spell.name)
+                              return (
+                                <button
+                                  key={spell.name}
+                                  type="button"
+                                  onClick={() => toggleManualSpell(spell)}
+                                  className={`w-full text-left p-3 rounded-lg border flex flex-col transition-all ${isSelected ? 'bg-magic-900/40 border-magic-500 shadow-[0_0_10px_rgba(0,180,216,0.2)]' : 'bg-black/30 border-white/5 hover:border-white/20'}`}
+                                >
+                                  <div className="flex justify-between items-start mb-1">
+                                    <span className={`text-sm font-bold ${isSelected ? 'text-magic-300' : 'text-white'}`}>{spell.name}</span>
+                                    {isSelected && <Check className="w-4 h-4 text-magic-400" />}
+                                  </div>
+                                  <span className="text-[10px] text-foreground/50 line-clamp-2 leading-relaxed">{spell.description}</span>
+                                </button>
+                              )
+                            })}
+                          </div>
+                        </div>
+
+                        {/* Level 1 Spells List */}
+                        <div>
+                           <div className="flex justify-between items-end mb-3">
+                            <h4 className="font-bold text-foreground/80">Conjuros de Nivel 1</h4>
+                            <span className="text-xs bg-purple-900/40 text-purple-300 px-2 py-0.5 rounded border border-purple-500/30">
+                              {manualSelectedSpells.filter(s => s.level === 'Nivel 1').length} / {spellLimits.level_1} Elegidos
+                            </span>
+                          </div>
+                          <div className="space-y-2 max-h-64 overflow-y-auto custom-scrollbar pr-2">
+                            {availableLevel1Spells.map(spell => {
+                              const isSelected = manualSelectedSpells.some(s => s.name === spell.name)
+                              return (
+                                <button
+                                  key={spell.name}
+                                  type="button"
+                                  onClick={() => toggleManualSpell(spell)}
+                                  className={`w-full text-left p-3 rounded-lg border flex flex-col transition-all ${isSelected ? 'bg-purple-900/40 border-purple-500 shadow-[0_0_10px_rgba(168,85,247,0.2)]' : 'bg-black/30 border-white/5 hover:border-white/20'}`}
+                                >
+                                  <div className="flex justify-between items-start mb-1">
+                                    <span className={`text-sm font-bold ${isSelected ? 'text-purple-300' : 'text-white'}`}>{spell.name}</span>
+                                    {isSelected && <Check className="w-4 h-4 text-purple-400" />}
+                                  </div>
+                                  <span className="text-[10px] text-foreground/50 line-clamp-2 leading-relaxed">{spell.description}</span>
+                                </button>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Hidden payload for custom spells */}
+                  <input type="hidden" name="custom_spells" value={JSON.stringify(manualSelectedSpells)} />
+                  
                   {/* Manual defaults for non-configured elements */}
                   <input type="hidden" name="skills" value="[]" />
                   <input type="hidden" name="hp_max" value="10" />
@@ -497,14 +715,19 @@ export default function CharacterCreationClient({ worlds, userId }: { worlds: an
           <form 
             action={async (formData) => {
               setIsSubmitting(true)
-              await createCharacter(formData)
-              // We rely on redirect inside action, so we leave loading true
+              setCreateError(null)
+              const res = await createCharacter(formData)
+              if (res?.error) {
+                setIsSubmitting(false)
+                setCreateError(res.error)
+              }
+              // If no error, redirect happens server-side
             }} 
             className="animate-in fade-in slide-in-from-bottom-8 duration-700"
           >
             {/* Hidden fields to pass data to actions.ts */}
             <input type="hidden" name="world_id" value={selectedWorld} />
-            <input type="hidden" name="background" value={backstory} />
+            <input type="hidden" name="background_story" value={backstory} />
             <input type="hidden" name="name" value={oracleResult.name} />
             
             {/* Base artificial stats (Server script applies bonuses again for security) */}
@@ -522,6 +745,12 @@ export default function CharacterCreationClient({ worlds, userId }: { worlds: an
             <input type="hidden" name="skills" value={JSON.stringify(proficientSkills)} />
             <input type="hidden" name="equipment" value={JSON.stringify(oracleResult.equipment || [])} />
             <input type="hidden" name="special_trait" value={oracleResult.specialTrait || ''} />
+            <input type="hidden" name="racial_traits" value={JSON.stringify(oracleResult.racial_traits || [])} />
+            <input type="hidden" name="class_features" value={JSON.stringify(oracleResult.class_features || [])} />
+            <input type="hidden" name="class_progression" value={JSON.stringify(oracleResult.class_progression || [])} />
+            <input type="hidden" name="custom_weapons" value={JSON.stringify(oracleResult.custom_weapons || [])} />
+            <input type="hidden" name="magic_items" value={JSON.stringify(oracleResult.magic_items || [])} />
+            <input type="hidden" name="custom_spells" value={JSON.stringify(oracleSelectedSpells)} />
             
             {/* Custom AI bonuses passed to server */}
             <input type="hidden" name="ai_racial_bonuses" value={JSON.stringify(oracleResult.racial_bonuses || {})} />
@@ -650,36 +879,307 @@ export default function CharacterCreationClient({ worlds, userId }: { worlds: an
                            </ul>
                         </div>
                       )}
+                      
+                      {/* Grimoire Preview */}
+                      {oracleResult.custom_spells && oracleResult.custom_spells.length > 0 && (
+                        <div className="pt-2">
+                           <div className="flex items-center justify-between mb-2">
+                             <h4 className="font-bold text-magic-400 text-xs uppercase tracking-wider flex items-center gap-1.5">
+                               <BookOpen className="w-3 h-3" /> Grimorio ({oracleSelectedSpells.length})
+                             </h4>
+                             {oracleIsSpellcaster && (
+                               <button 
+                                 type="button" 
+                                 onClick={() => setActiveModal('oracleSpells')}
+                                 className="text-[10px] text-magic-300 bg-magic-900/40 hover:bg-magic-900/60 transition-colors px-2 py-1 rounded border border-magic-500/30"
+                               >
+                                 Editar Grimorio
+                               </button>
+                             )}
+                           </div>
+                           <ul className="space-y-1.5">
+                             {oracleSelectedSpells.map((spell: any, i: number) => (
+                               <li key={i} className="text-[11px] text-foreground/70 bg-black/40 border border-white/5 rounded p-1.5 flex justify-between items-center">
+                                 <span className="font-bold">{spell.name}</span>
+                                 <span className="text-[9px] text-foreground/40">{spell.level}</span>
+                               </li>
+                             ))}
+                           </ul>
+                        </div>
+                      )}
                     </section>
                   </div>
 
                   {/* Final Actions */}
-                  <div className="pt-6 border-t border-amber-900/20 flex gap-4 justify-end">
-                    <button 
-                      type="button" 
-                      onClick={() => setOracleResult(null)} 
-                      disabled={isSubmitting} 
-                      className="px-6 py-3 rounded-xl border border-white/10 hover:bg-white/5 transition-colors disabled:opacity-50 text-foreground/70 font-medium"
-                    >
-                      Ajustar Historia
-                    </button>
-                    <button 
-                      type="submit" 
-                      disabled={isSubmitting} 
-                      className="bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white rounded-xl px-10 py-3 font-bold shadow-[0_0_20px_-5px_rgba(217,119,6,0.4)] flex items-center gap-2 transition-all"
-                    >
-                      {isSubmitting ? (
-                        <><Sparkles className="w-5 h-5 animate-spin" /> Materializando...</>
-                      ) : (
-                        <><Swords className="w-5 h-5" /> Aceptar este Destino</>
-                      )}
-                    </button>
+                  <div className="pt-6 border-t border-amber-900/20 space-y-4">
+                    {/* Error display */}
+                    {createError && (
+                      <div className="bg-red-900/20 border border-red-500/30 rounded-xl p-4 flex items-center gap-3">
+                        <AlertCircle className="w-5 h-5 text-red-400 shrink-0" />
+                        <p className="text-sm text-red-300">{createError}</p>
+                      </div>
+                    )}
+                    <div className="flex gap-4 justify-end">
+                      <button 
+                        type="button" 
+                        onClick={() => setOracleResult(null)} 
+                        disabled={isSubmitting} 
+                        className="px-6 py-3 rounded-xl border border-white/10 hover:bg-white/5 transition-colors disabled:opacity-50 text-foreground/70 font-medium"
+                      >
+                        Ajustar Historia
+                      </button>
+                      <button 
+                        type="submit" 
+                        disabled={isSubmitting} 
+                        className="bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white rounded-xl px-10 py-3 font-bold shadow-[0_0_20px_-5px_rgba(217,119,6,0.4)] flex items-center gap-2 transition-all"
+                      >
+                        {isSubmitting ? (
+                          <><Sparkles className="w-5 h-5 animate-spin" /> Materializando...</>
+                        ) : (
+                          <><Swords className="w-5 h-5" /> Aceptar este Destino</>
+                        )}
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
             </div>
           </form>
         )}
+
+        {/* ─── INTERACTIVE SELECTION MODALS ──────────────────────────────────────────── */}
+        {activeModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+            <div className="bg-stone-900 border border-white/10 shadow-2xl rounded-2xl w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden relative">
+              
+              {/* Modal Header */}
+              <div className="p-6 border-b border-white/5 flex justify-between items-center bg-black/20 sticky top-0 z-10">
+                <div>
+                  <h2 className="text-2xl font-bold font-serif text-amber-500 flex items-center gap-2">
+                    {activeModal === 'race' && <><Globe className="w-6 h-6"/> Elige tu Raza</>}
+                    {activeModal === 'class' && <><Swords className="w-6 h-6 text-blue-400"/> Elige tu Clase</>}
+                    {activeModal === 'background' && <><ScrollText className="w-6 h-6 text-purple-400"/> Elige tu Trasfondo</>}
+                    {activeModal === 'oracleSpells' && <><BookOpen className="w-6 h-6 text-magic-400"/> Edita tu Grimorio</>}
+                  </h2>
+                  <p className="text-sm text-foreground/50 mt-1">
+                    {activeModal === 'race' && "Determina tu linaje, apariencias y rasgos naturales."}
+                    {activeModal === 'class' && "Define tu profesión, habilidades de combate y acceso a la magia."}
+                    {activeModal === 'background' && "Revela de dónde vienes y qué destrezas forjaste en tu pasado."}
+                    {activeModal === 'oracleSpells' && "El Oráculo eligió estos hechizos para ti. Eres libre de alterarlos antes de transcribirlos."}
+                  </p>
+                </div>
+                <button 
+                  onClick={() => setActiveModal(null)}
+                  className="p-2 hover:bg-white/10 rounded-full transition-colors text-foreground/50 hover:text-white"
+                >
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+
+              {/* Modal Content / Grid */}
+              <div className="p-6 overflow-y-auto custom-scrollbar">
+                
+                {/* RACES GRID */}
+                {activeModal === 'race' && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {DND_RACES.map(raceName => {
+                      const desc = RACE_DESCRIPTIONS[raceName] || { flavor: 'Una raza de los reinos.', mechanics: '' }
+                      const isSelected = manualRace === raceName
+                      return (
+                        <button
+                          key={raceName}
+                          onClick={() => { setManualRace(raceName); setActiveModal(null); }}
+                          className={`text-left p-5 rounded-xl border transition-all duration-300 group
+                            ${isSelected 
+                              ? 'bg-amber-900/20 border-amber-500 shadow-[0_0_15px_-3px_rgba(245,158,11,0.3)]' 
+                              : 'bg-black/40 border-white/5 hover:border-amber-500/50 hover:bg-white/5 hover:-translate-y-1 hover:shadow-lg'}`}
+                        >
+                          <h3 className={`text-lg font-bold mb-2 ${isSelected ? 'text-amber-400' : 'text-foreground group-hover:text-amber-500 transition-colors'}`}>
+                            {raceName}
+                          </h3>
+                          <p className="text-xs text-foreground/60 mb-3 line-clamp-3">{desc.flavor}</p>
+                          <div className="text-[10px] text-amber-500/80 font-medium bg-black/40 p-2 rounded">
+                            {desc.mechanics}
+                          </div>
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
+
+                {/* CLASSES GRID */}
+                {activeModal === 'class' && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {DND_CLASSES.map(className => {
+                      const desc = CLASS_DESCRIPTIONS[className] || { flavor: 'Un aventurero.', mechanics: '', role: '' }
+                      const isSelected = manualClass === className
+                      return (
+                        <button
+                          key={className}
+                          onClick={() => { setManualClass(className); setActiveModal(null); }}
+                          className={`text-left p-5 rounded-xl border transition-all duration-300 group flex flex-col h-full
+                            ${isSelected 
+                              ? 'bg-blue-900/20 border-blue-400 shadow-[0_0_15px_-3px_rgba(96,165,250,0.3)]' 
+                              : 'bg-black/40 border-white/5 hover:border-blue-400/50 hover:bg-white/5 hover:-translate-y-1 hover:shadow-lg'}`}
+                        >
+                          <div className="flex-1">
+                            <h3 className={`text-lg font-bold mb-2 flex justify-between items-start ${isSelected ? 'text-blue-400' : 'text-foreground group-hover:text-blue-400 transition-colors'}`}>
+                              {className}
+                              <span className="text-[9px] uppercase tracking-wider bg-black/50 px-2 py-1 rounded text-foreground/40 font-normal">
+                                {desc.role.split(',')[0]}
+                              </span>
+                            </h3>
+                            <p className="text-xs text-foreground/60 mb-4">{desc.flavor}</p>
+                          </div>
+                          <div className="text-[10px] text-blue-400/80 font-medium bg-black/40 p-2 rounded mt-auto">
+                            {desc.mechanics}
+                          </div>
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
+
+                {/* BACKGROUNDS GRID (Using the massive backgrounds table) */}
+                {activeModal === 'background' && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                    {backgrounds.map(bg => {
+                      const isSelected = manualBackgroundId === bg.id
+                      
+                      let skills: string[] = []
+                      try { skills = typeof bg.skill_proficiencies === 'string' ? JSON.parse(bg.skill_proficiencies) : (bg.skill_proficiencies || []) } catch(e){}
+                      const skillText = skills.length > 0 ? skills.join(', ') : 'Varías habilidades'
+
+                      return (
+                        <button
+                          key={bg.id}
+                          onClick={() => { setManualBackgroundId(bg.id); setActiveModal(null); }}
+                          className={`text-left p-4 rounded-xl border transition-all duration-300 group flex flex-col h-full
+                            ${isSelected 
+                              ? 'bg-purple-900/20 border-purple-400 shadow-[0_0_15px_-3px_rgba(192,132,252,0.3)]' 
+                              : 'bg-black/40 border-white/5 hover:border-purple-400/50 hover:bg-white/5 hover:-translate-y-1 hover:shadow-lg'}`}
+                        >
+                          <div className="flex-1">
+                            <h3 className={`text-sm font-bold mb-2 ${isSelected ? 'text-purple-400' : 'text-foreground group-hover:text-purple-400 transition-colors'}`}>
+                              {bg.name}
+                            </h3>
+                            <p className="text-[10px] text-foreground/50 mb-3 line-clamp-2 italic">
+                              {bg.description?.length > 30 ? bg.description : 'Historia personal y orígenes.'}
+                            </p>
+                            {bg.feature_name && (
+                              <div className="mb-3">
+                                <span className="text-[9px] uppercase font-bold text-purple-300/80 bg-purple-900/40 px-1 py-0.5 rounded mr-1">
+                                  Rasgo
+                                </span>
+                                <span className="text-[10px] font-bold text-purple-300">{bg.feature_name}</span>
+                                <p className="text-[9px] text-foreground/70 mt-1 line-clamp-3 leading-tight">
+                                  {bg.feature_description}
+                                </p>
+                              </div>
+                            )}
+                          </div>
+                          
+                          <div className="mt-auto pt-2 border-t border-white/5">
+                            <div className="text-[9px] text-foreground/60 bg-black/40 p-1.5 rounded line-clamp-1">
+                              {skillText}
+                            </div>
+                          </div>
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
+
+                {/* ORACLE SPELLS INTERACTIVE GRID */}
+                {activeModal === 'oracleSpells' && oracleIsSpellcaster && oracleSpellLimits && (
+                  <div className="space-y-8">
+                    <div className="flex items-center justify-between bg-black/40 p-4 rounded-xl border border-white/5">
+                      <p className="text-sm text-foreground/60">
+                        Has sido bendecido con el don de la magia como <strong className="text-magic-400">{oracleResult.class}</strong>. El Oráculo ha sugerido estos conjuros, pero tú tienes la última palabra.
+                      </p>
+                      <button 
+                         onClick={() => setActiveModal(null)}
+                         className="shrink-0 bg-magic-600 hover:bg-magic-500 text-white px-6 py-2 rounded-lg font-bold text-sm shadow-[0_0_15px_-3px_rgba(0,180,216,0.3)] transition-colors"
+                      >
+                         Guardar Grimorio
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                      {/* Cantrips */}
+                      <div>
+                        <div className="flex justify-between items-end mb-4 border-b border-white/10 pb-2">
+                          <h4 className="font-bold text-foreground/80 flex items-center gap-2"><Sparkles className="w-4 h-4 text-magic-400"/> Trucos (Cantrips)</h4>
+                          <span className="text-xs bg-magic-900/40 text-magic-300 px-2 py-0.5 rounded border border-magic-500/30 font-bold">
+                            {oracleSelectedSpells.filter(s => s.level === 'Truco').length} / {oracleSpellLimits.cantrips}
+                          </span>
+                        </div>
+                        <div className="space-y-3">
+                          {availableOracleCantrips.map(spell => {
+                            const isSelected = oracleSelectedSpells.some(s => s.name === spell.name)
+                            return (
+                              <button
+                                key={spell.name}
+                                type="button"
+                                onClick={() => toggleOracleSpell(spell)}
+                                className={`w-full text-left p-4 rounded-xl border flex flex-col transition-all duration-300 ${isSelected ? 'bg-magic-900/20 border-magic-500 shadow-[0_0_15px_rgba(0,180,216,0.2)]' : 'bg-black/40 border-white/5 hover:border-white/20 hover:bg-white/5'}`}
+                              >
+                                <div className="flex justify-between items-start mb-2">
+                                  <span className={`text-base font-bold ${isSelected ? 'text-magic-300' : 'text-white'}`}>{spell.name}</span>
+                                  {isSelected && <Check className="w-5 h-5 text-magic-400 drop-shadow-[0_0_8px_rgba(0,180,216,0.8)]" />}
+                                </div>
+                                <div className="flex gap-2 mb-2 text-[10px] uppercase font-bold tracking-wider text-foreground/40">
+                                  <span className="bg-black/50 px-1.5 py-0.5 rounded">T: {spell.casting_time}</span>
+                                  <span className="bg-black/50 px-1.5 py-0.5 rounded">R: {spell.range}</span>
+                                </div>
+                                <span className="text-xs text-foreground/60 leading-relaxed">{spell.description}</span>
+                              </button>
+                            )
+                          })}
+                        </div>
+                      </div>
+
+                      {/* Level 1 Spells */}
+                      <div>
+                         <div className="flex justify-between items-end mb-4 border-b border-white/10 pb-2">
+                          <h4 className="font-bold text-foreground/80 flex items-center gap-2"><BookOpen className="w-4 h-4 text-purple-400"/> Conjuros de Nivel 1</h4>
+                          <span className="text-xs bg-purple-900/40 text-purple-300 px-2 py-0.5 rounded border border-purple-500/30 font-bold">
+                            {oracleSelectedSpells.filter(s => s.level === 'Nivel 1').length} / {oracleSpellLimits.level_1}
+                          </span>
+                        </div>
+                        <div className="space-y-3">
+                          {availableOracleLevel1Spells.map(spell => {
+                            const isSelected = oracleSelectedSpells.some(s => s.name === spell.name)
+                            return (
+                              <button
+                                key={spell.name}
+                                type="button"
+                                onClick={() => toggleOracleSpell(spell)}
+                                className={`w-full text-left p-4 rounded-xl border flex flex-col transition-all duration-300 ${isSelected ? 'bg-purple-900/20 border-purple-500 shadow-[0_0_15px_rgba(168,85,247,0.2)]' : 'bg-black/40 border-white/5 hover:border-white/20 hover:bg-white/5'}`}
+                              >
+                                <div className="flex justify-between items-start mb-2">
+                                  <span className={`text-base font-bold ${isSelected ? 'text-purple-300' : 'text-white'}`}>{spell.name}</span>
+                                  {isSelected && <Check className="w-5 h-5 text-purple-400 drop-shadow-[0_0_8px_rgba(168,85,247,0.8)]" />}
+                                </div>
+                                <div className="flex gap-2 mb-2 text-[10px] uppercase font-bold tracking-wider text-foreground/40">
+                                  <span className="bg-black/50 px-1.5 py-0.5 rounded">T: {spell.casting_time}</span>
+                                  <span className="bg-black/50 px-1.5 py-0.5 rounded">R: {spell.range}</span>
+                                </div>
+                                <span className="text-xs text-foreground/60 leading-relaxed">{spell.description}</span>
+                              </button>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+              </div>
+            </div>
+          </div>
+        )}
+
       </main>
     </div>
   )

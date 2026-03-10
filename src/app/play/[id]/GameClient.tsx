@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
+import { createClient } from '@/utils/supabase/client'
 import { 
   Swords, 
   Send, 
@@ -154,15 +155,20 @@ export default function GameClient({
   world, 
   campaign,
   initialEvents, 
-  currentUser 
+  currentUser,
+  session,
+  sessionPlayers,
 }: { 
   character: any
   world: any
   campaign: Campaign | null
   initialEvents: Event[]
   currentUser: any 
+  session?: any | null
+  sessionPlayers?: any[]
 }) {
   const router = useRouter()
+  const supabase = createClient()
   const [events, setEvents] = useState<Event[]>(initialEvents)
   const [inputText, setInputText] = useState('')
   const [isSending, setIsSending] = useState(false)
@@ -170,7 +176,51 @@ export default function GameClient({
   const [isTyping, setIsTyping] = useState(false)           // typewriter in progress
   const [pendingDiceRoll, setPendingDiceRoll] = useState<any>(null) // Holds roll data until GM message finishes typing
   const [chatTab, setChatTab] = useState<'adventure' | 'group'>('adventure')
+  const [activeSessionPlayers, setActiveSessionPlayers] = useState<any[]>(sessionPlayers || [])
+  const [liveSession, setLiveSession] = useState<any>(session || null)
   const chatEndRef = useRef<HTMLDivElement>(null)
+
+  // ─── Multiplayer Realtime Subscription ────────────────────────────────────
+  useEffect(() => {
+    if (!session?.id) return
+
+    const channel = supabase.channel(`game:${session.id}`)
+      .on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'narrative_events',
+        filter: `session_id=eq.${session.id}`,
+      }, (payload: any) => {
+        // Only add if not from current user's char (we handle our own optimistically)
+        if (payload.new.character_id !== character.id) {
+          setEvents(prev => {
+            if (prev.find(e => e.id === payload.new.id)) return prev
+            return [...prev, payload.new]
+          })
+        }
+      })
+      .on('postgres_changes', {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'game_sessions',
+        filter: `id=eq.${session.id}`,
+      }, (payload: any) => {
+        setLiveSession((prev: any) => ({ ...prev, ...payload.new }))
+      })
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'session_players',
+        filter: `session_id=eq.${session.id}`,
+      }, () => {
+        router.refresh()
+      })
+      .subscribe()
+
+    return () => { supabase.removeChannel(channel) }
+  }, [session?.id, character.id, supabase, router])
+
+  const isMyTurn = !liveSession || liveSession.turn_player_id === currentUser.id
 
   const scrollToBottom = () => chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   useEffect(() => { scrollToBottom() }, [events, chatTab, isTyping])
@@ -283,7 +333,11 @@ export default function GameClient({
       const response = await fetch('/api/engine/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ characterId: character.id, content: userMessage })
+        body: JSON.stringify({ 
+          characterId: character.id, 
+          content: userMessage,
+          sessionId: liveSession?.id || null
+        })
       })
 
       if (!response.ok || !response.body) {
@@ -377,7 +431,7 @@ export default function GameClient({
           </Link>
           <div className="w-px h-5 bg-amber-900/40" />
           <div>
-            <p className="font-display text-sm font-bold text-parchment-200 leading-none">{world.name}</p>
+            <p className="font-display text-sm font-bold text-parchment-200 leading-none">{world?.name || 'Mundo Desconocido'}</p>
             <p className="text-[10px] text-foreground/40 mt-0.5">Sesión en curso</p>
           </div>
         </div>
@@ -387,7 +441,30 @@ export default function GameClient({
             {campaign.title}
           </div>
         )}
-        <div className="w-20" /> {/* Spacer */}
+        {/* ─── Multiplayer Player Bar ─── */}
+        {liveSession && activeSessionPlayers.length > 0 && (
+          <div className="hidden md:flex items-center gap-2">
+            {activeSessionPlayers.map((sp: any) => {
+              const isActive = liveSession.turn_player_id === sp.user_id
+              const char = sp.characters
+              return (
+                <div 
+                  key={sp.id}
+                  className={`flex items-center gap-2 px-2.5 py-1.5 rounded-full border text-xs transition-all ${
+                    isActive 
+                      ? 'border-amber-500/60 bg-amber-900/30 text-amber-300 shadow-[0_0_8px_-2px_rgba(245,158,11,0.4)]' 
+                      : 'border-stone-700/40 bg-stone-950/60 text-stone-500'
+                  }`}
+                >
+                  {isActive && <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />}
+                  <span className="font-medium">{sp.profiles?.username || '?'}</span>
+                  {char && <span className="text-[10px] opacity-60">{char.name}</span>}
+                </div>
+              )
+            })}
+          </div>
+        )}
+        {!liveSession && <div className="w-20" />} {/* Spacer for single player */}
       </nav>
 
       {/* Main 3-Column Layout */}
@@ -889,7 +966,7 @@ export default function GameClient({
             {/* World Info */}
             <div className="space-y-2 pt-4 border-t border-amber-900/20">
               <h3 className="font-display text-[10px] text-foreground/30 uppercase tracking-widest">Mundo Activo</h3>
-              <p className="font-display text-xs text-amber-600/60">{world.name}</p>
+              <p className="font-display text-xs text-amber-600/60">{world?.name || 'Mundo Desconocido'}</p>
               {world.genre && (
                 <p className="text-[10px] text-foreground/30 italic">{world.genre}</p>
               )}
