@@ -95,10 +95,14 @@ class FakeEngineStreamRepository implements EngineStreamRepository {
         character: CharacterRecord;
         sessionPlayers?: SessionPlayerRow[];
         sessionCombatState?: SessionCombatStateRecord | null;
+        recentSessionEvents?: NarrativeEventRow[];
+        recentCharacterEvents?: NarrativeEventRow[];
     }) {
         this.character = params.character;
         this.sessionPlayers = params.sessionPlayers ?? [];
         this.sessionCombatState = params.sessionCombatState ?? null;
+        this.recentSessionEvents = params.recentSessionEvents ?? [];
+        this.recentCharacterEvents = params.recentCharacterEvents ?? [];
     }
 
     async getCharacterWithWorld(characterId: string) {
@@ -454,4 +458,60 @@ test("stream runtime closes combat through atomic transition when combat_ended a
     assert.equal(repository.combatTransitions[0].combatState.status, "ended");
 
     assert.equal(repository.participantSnapshots.length, 0);
+});
+
+test("stream runtime short-circuits duplicate session submits by client_event_id", async () => {
+    const repository = new FakeEngineStreamRepository({
+        character: buildCharacter(),
+        sessionPlayers: buildSessionPlayers(),
+        sessionCombatState: buildActiveCombatState(),
+        recentSessionEvents: [
+            {
+                id: "event-1",
+                role: "user",
+                content: "Ataco al capitán goblin.",
+                created_at: new Date().toISOString(),
+                session_id: "session-1",
+                character_id: "char-1",
+                client_event_id: "client-event-duplicate",
+                event_index: 11,
+                payload: { sender_name: "Kael" },
+            },
+        ],
+    });
+
+    let gatewayCalled = false;
+    const modelGateway: EngineStreamModelGateway = {
+        async generateContentStream() {
+            gatewayCalled = true;
+            throw new Error("Model should not be called for duplicate retries");
+        },
+    };
+
+    const response = await processEngineStream({
+        repository,
+        modelGateway,
+        userId: "user-1",
+        body: {
+            characterId: "char-1",
+            content: "Ataco al capitán goblin.",
+            sessionId: "session-1",
+            clientEventId: "client-event-duplicate",
+        },
+    });
+
+    assert.equal(response.status, 200);
+    assert.equal(gatewayCalled, false);
+    assert.equal(repository.narrativeEvents.length, 0);
+    assert.equal(repository.characterUpdates.length, 0);
+
+    const payload = (await response.json()) as {
+        ok?: boolean;
+        duplicate?: boolean;
+        system_only?: boolean;
+    };
+
+    assert.equal(payload.ok, true);
+    assert.equal(payload.duplicate, true);
+    assert.equal(payload.system_only, true);
 });

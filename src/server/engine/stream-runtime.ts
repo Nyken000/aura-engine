@@ -67,6 +67,7 @@ export type NarrativeEventRow = {
     session_id?: string | null;
     character_id?: string | null;
     event_index?: number | null;
+    client_event_id?: string | null;
     payload?: {
         sender_name?: string;
         [key: string]: unknown;
@@ -254,6 +255,84 @@ function parseModelResponse(fullResponse: string): {
         combatUpdate,
         combatEventResolution,
     };
+}
+
+function isDuplicateClientEventError(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error ?? "");
+    const normalized = message.toLowerCase();
+
+    return (
+        normalized.includes("client_event_id") &&
+        (normalized.includes("duplicate") ||
+            normalized.includes("unique") ||
+            normalized.includes("uq_narrative_events_session_client_event_id"))
+    );
+}
+
+function hasMatchingClientEvent(
+    events: NarrativeEventRow[],
+    clientEventId: string | null,
+): boolean {
+    if (!clientEventId) return false;
+    return events.some((event) => event.client_event_id === clientEventId);
+}
+
+async function persistInboundNarrativeEvent(params: {
+    repository: EngineStreamRepository;
+    character: CharacterRecord;
+    content: string;
+    normalizedSessionId: string | null;
+    normalizedClientEventId: string;
+    parsedDiceResult: DiceRollOutcome | null;
+}): Promise<"inserted" | "duplicate"> {
+    const {
+        repository,
+        character,
+        content,
+        normalizedSessionId,
+        normalizedClientEventId,
+        parsedDiceResult,
+    } = params;
+
+    const row: NarrativeEventInsert = parsedDiceResult
+        ? {
+              world_id: character.worlds?.id ?? null,
+              character_id: character.id,
+              role: "system",
+              content: buildDiceResultFeedbackMessage(parsedDiceResult),
+              session_id: normalizedSessionId,
+              client_event_id: normalizedClientEventId,
+              event_type: "dice_result",
+              payload: {
+                  sender_name: character.name,
+                  channel: "adventure",
+                  dice_result: parsedDiceResult,
+              },
+          }
+        : {
+              world_id: character.worlds?.id ?? null,
+              character_id: character.id,
+              role: "user",
+              content,
+              session_id: normalizedSessionId,
+              client_event_id: normalizedClientEventId,
+              event_type: "player_message",
+              payload: {
+                  sender_name: character.name,
+                  channel: "adventure",
+              },
+          };
+
+    try {
+        await repository.insertNarrativeEvents([row]);
+        return "inserted";
+    } catch (error) {
+        if (normalizedSessionId && isDuplicateClientEventError(error)) {
+            return "duplicate";
+        }
+
+        throw error;
+    }
 }
 
 function buildCombatPromptContext(
@@ -494,39 +573,21 @@ export async function processEngineStream(params: {
         character.combat_state,
     );
 
-    if (parsedDiceResult) {
-        await repository.insertNarrativeEvents([
-            {
-                world_id: character.worlds?.id ?? null,
-                character_id: character.id,
-                role: "system",
-                content: buildDiceResultFeedbackMessage(parsedDiceResult),
-                session_id: normalizedSessionId,
-                client_event_id: normalizedClientEventId,
-                event_type: "dice_result",
-                payload: {
-                    sender_name: character.name,
-                    channel: "adventure",
-                    dice_result: parsedDiceResult,
-                },
-            },
-        ]);
-    } else {
-        await repository.insertNarrativeEvents([
-            {
-                world_id: character.worlds?.id ?? null,
-                character_id: character.id,
-                role: "user",
-                content,
-                session_id: normalizedSessionId,
-                client_event_id: normalizedClientEventId,
-                event_type: "player_message",
-                payload: {
-                    sender_name: character.name,
-                    channel: "adventure",
-                },
-            },
-        ]);
+    if (normalizedSessionId && hasMatchingClientEvent(recentEvents, normalizedClientEventId)) {
+        return Response.json({ ok: true, duplicate: true, system_only: true });
+    }
+
+    const persistedInboundEvent = await persistInboundNarrativeEvent({
+        repository,
+        character,
+        content,
+        normalizedSessionId,
+        normalizedClientEventId,
+        parsedDiceResult,
+    });
+
+    if (persistedInboundEvent === "duplicate") {
+        return Response.json({ ok: true, duplicate: true, system_only: true });
     }
 
     const initMatch = content.match(/\[SISTEMA_INICIATIVA:\s*(\d+)\]/);

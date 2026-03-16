@@ -298,6 +298,10 @@ function sortEvents(events: NarrativeEvent[]) {
       return (a.event_index ?? 0) - (b.event_index ?? 0)
     }
 
+    if (aHasIndex !== bHasIndex) {
+      return aHasIndex ? -1 : 1
+    }
+
     return new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
   })
 }

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
     advanceSessionCombatTurn,
+    applyCharacterHpToSessionCombat,
     currentCombatToPromptState,
     registerSessionInitiative,
     resolveTurnPlayerIdFromParticipant,
@@ -226,6 +227,109 @@ test("currentCombatToPromptState preserves shared state across refresh with cond
     assert.equal(promptState.participants[0].name, "Kael");
     assert.equal(
         sharedState.participants[0].conditions?.[0]?.name,
+        "Envenenado",
+    );
+});
+test("initiative state can be rehydrated after refresh and still converges once the missing player submits", () => {
+    const baseState = buildInitiativeState();
+
+    const firstSubmission = registerSessionInitiative({
+        currentState: baseState,
+        userId: "user-1",
+        rolledInitiative: 17,
+    });
+
+    const rehydratedPromptState = currentCombatToPromptState(firstSubmission.combatState, null);
+
+    assert.equal(rehydratedPromptState.in_combat, true);
+    assert.equal(firstSubmission.combatState.status, "initiative");
+    assert.equal(firstSubmission.turnPlayerId, null);
+    assert.equal(firstSubmission.awaitingMoreInitiatives, true);
+    assert.equal(
+        firstSubmission.combatState.participants.find((participant) => participant.user_id === "user-1")?.initiative,
+        17,
+    );
+    assert.equal(
+        firstSubmission.combatState.participants.find((participant) => participant.user_id === "user-2")?.initiative,
+        null,
+    );
+
+    const finalState = registerSessionInitiative({
+        currentState: firstSubmission.combatState,
+        userId: "user-2",
+        rolledInitiative: 11,
+    });
+
+    assert.equal(finalState.combatState.status, "active");
+    assert.equal(finalState.turnPlayerId, "user-1");
+    assert.equal(finalState.awaitingMoreInitiatives, false);
+});
+
+test("active shared combat can be rehydrated after refresh without drifting hp, turn or conditions", () => {
+    const activeState: SessionCombatStateRecord = {
+        session_id: "session-1",
+        status: "active",
+        round: 2,
+        turn_index: 1,
+        participants: [
+            {
+                id: "player:user-1",
+                user_id: "user-1",
+                character_id: "char-1",
+                name: "Kael",
+                hp: 14,
+                max_hp: 20,
+                ac: 15,
+                initiative: 17,
+                is_player: true,
+                is_defeated: false,
+                conditions: [
+                    {
+                        id: "poisoned",
+                        name: "Envenenado",
+                        duration_rounds: 2,
+                        applied_at_round: 2,
+                        applied_by_participant_id: "enemy:Goblin Captain:0",
+                        source: "Daga envenenada",
+                        summary: "Sufre desventaja en tiradas de ataque.",
+                    },
+                ],
+            },
+            {
+                id: "player:user-2",
+                user_id: "user-2",
+                character_id: "char-2",
+                name: "Lyra",
+                hp: 18,
+                max_hp: 18,
+                ac: 14,
+                initiative: 11,
+                is_player: true,
+                is_defeated: false,
+                conditions: [],
+            },
+        ],
+    };
+
+    const refreshedPromptState = currentCombatToPromptState(activeState, null);
+    const updatedState = applyCharacterHpToSessionCombat({
+        currentState: activeState,
+        characterId: "char-1",
+        hp: 10,
+        maxHp: 20,
+    });
+
+    assert.equal(refreshedPromptState.in_combat, true);
+    assert.equal(refreshedPromptState.turn, 1);
+    assert.equal(updatedState.status, "active");
+    assert.equal(updatedState.round, 2);
+    assert.equal(updatedState.turn_index, 1);
+    assert.equal(
+        updatedState.participants.find((participant) => participant.character_id === "char-1")?.hp,
+        10,
+    );
+    assert.equal(
+        updatedState.participants.find((participant) => participant.character_id === "char-1")?.conditions?.[0]?.name,
         "Envenenado",
     );
 });

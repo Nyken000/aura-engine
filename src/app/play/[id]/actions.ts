@@ -68,6 +68,19 @@ export async function submitChatAction(
   const campaign = typedCharacter.campaign_id ? getCampaignById(typedCharacter.campaign_id) : null
   const messageContent = type === 'group' ? `[OOC] ${content}` : content
 
+  if (sessionId && clientEventId) {
+    const { data: existingEvent } = await supabase
+      .from('narrative_events')
+      .select('id')
+      .eq('session_id', sessionId)
+      .eq('client_event_id', clientEventId)
+      .maybeSingle()
+
+    if (existingEvent) {
+      return { success: true, duplicate: true }
+    }
+  }
+
   await supabase.from('narrative_events').insert([
     {
       world_id: world?.id ?? null,
