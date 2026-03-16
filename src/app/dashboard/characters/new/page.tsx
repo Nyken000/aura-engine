@@ -23,5 +23,5 @@ export default async function NewCharacterPage() {
     .select('*')
     .order('name')
 
-  return <CharacterCreationClient worlds={worlds || []} backgrounds={backgrounds || []} userId={user.id} />
+  return <CharacterCreationClient worlds={worlds || []} backgrounds={backgrounds || []} />
 }

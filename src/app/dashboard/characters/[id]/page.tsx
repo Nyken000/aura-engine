@@ -2,12 +2,65 @@ import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import { notFound, redirect } from 'next/navigation'
 import Link from 'next/link'
-import { ArrowLeft, Shield, Swords, Heart, Brain, Activity, ScrollText, User, Package, Target, Sparkles, Flame, BookOpen } from 'lucide-react'
+import Image from 'next/image'
+import {
+  ArrowLeft,
+  Shield,
+  Swords,
+  Heart,
+  Activity,
+  ScrollText,
+  User,
+  Package,
+  Target,
+  Sparkles,
+  Flame,
+  BookOpen,
+  Brain,
+} from 'lucide-react'
 import ExpandableText from '../../components/ExpandableText'
 import { RACE_DESCRIPTIONS, CLASS_DESCRIPTIONS } from '@/data/dnd/basic_descriptions'
 import { ALL_SKILLS, skillModifier, formatMod, isSkillProficient } from '@/utils/game/skills'
 
+
 export const dynamic = 'force-dynamic'
+
+type CharacterStats = {
+  str?: number
+  dex?: number
+  con?: number
+  int?: number
+  wis?: number
+  cha?: number
+  race?: string
+  class?: string
+  background?: string
+  class_progression?: ClassProgressionEntry[]
+  custom_spells?: SpellEntry[]
+  [key: string]: unknown
+}
+
+type InventoryItem = {
+  name?: string
+  type?: 'item' | 'weapon' | 'magic_item' | 'passive' | 'racial'
+  description?: string
+  damage?: string
+  properties?: string
+  rarity?: string
+}
+
+type ClassProgressionEntry = {
+  level?: number
+  features?: string[]
+}
+
+type SpellEntry = {
+  name?: string
+  level?: string
+  casting_time?: string
+  range?: string
+  description?: string
+}
 
 function calculateModifier(score: number) {
   return Math.floor((score - 10) / 2)
@@ -49,8 +102,7 @@ export default async function CharacterSheetPage({ params }: { params: { id: str
   if (!character) notFound()
 
   // Parse stats JSONB
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let stats: Record<string, any> = {}
+  let stats: CharacterStats = {}
   try {
     stats = typeof character.stats === 'string' ? JSON.parse(character.stats) : (character.stats || {})
   } catch (e: unknown) {
@@ -69,8 +121,7 @@ export default async function CharacterSheetPage({ params }: { params: { id: str
 
   // Parse arrays
   let skills: string[] = []
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let inventoryRaw: any[] = []
+  let inventoryRaw: InventoryItem[] = []
   try { skills = typeof character.skills === 'string' ? JSON.parse(character.skills) : (character.skills || []) } catch(e: unknown){ console.error(e) }
   try { inventoryRaw = typeof character.inventory === 'string' ? JSON.parse(character.inventory) : (character.inventory || []) } catch(e: unknown){ console.error(e) }
 
@@ -104,7 +155,13 @@ export default async function CharacterSheetPage({ params }: { params: { id: str
           {/* Avatar frame */}
           <div className="w-32 h-32 md:w-40 md:h-40 shrink-0 bg-stone-900 border-2 border-amber-600/50 rounded-2xl shadow-[0_0_30px_-5px_rgba(217,119,6,0.3)] flex items-center justify-center relative overflow-hidden">
             {character.avatar_url ? (
-              <img src={character.avatar_url} alt={character.name} className="w-full h-full object-cover" />
+              <Image
+                src={character.avatar_url}
+                alt={character.name}
+                fill
+                className="object-cover"
+                sizes="160px"
+              />
             ) : (
               <User className="w-16 h-16 text-amber-600/30" />
             )}
@@ -325,7 +382,7 @@ export default async function CharacterSheetPage({ params }: { params: { id: str
                 </h3>
                 
                 <div className="relative border-l border-white/10 ml-3 md:ml-4 space-y-6 pb-2">
-                  {stats.class_progression.map((prog: any, i: number) => (
+                  {stats.class_progression.map((prog: ClassProgressionEntry, i: number) => (
                     <div key={i} className="relative pl-6 md:pl-8">
                       {/* Timeline dot */}
                       <div className="absolute -left-[5px] top-1 w-2.5 h-2.5 rounded-full bg-blue-500 shadow-[0_0_10px_rgba(59,130,246,0.8)]" />
@@ -400,7 +457,7 @@ export default async function CharacterSheetPage({ params }: { params: { id: str
                 </h3>
                 
                 <div className="grid grid-cols-1 gap-4">
-                  {stats.custom_spells.map((spell: any, i: number) => (
+                  {stats.custom_spells.map((spell: SpellEntry, i: number) => (
                     <div key={i} className="bg-magic-900/10 border border-magic-500/20 p-4 rounded-xl hover:border-magic-500/40 transition-colors">
                       <div className="flex justify-between items-start mb-2">
                         <h4 className="font-bold text-magic-300">{spell.name}</h4>
@@ -425,14 +482,13 @@ export default async function CharacterSheetPage({ params }: { params: { id: str
               
               <ul className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {items.length > 0 ? (
-                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                  items.map((item: any, i: number) => (
+                  items.map((item: InventoryItem, i: number) => (
                     <li key={i} className={`bg-stone-900/80 border p-3 rounded-lg flex items-start gap-3 transition-colors ${item.type === 'magic_item' ? 'border-purple-500/30 hover:border-purple-500/50' : item.type === 'weapon' ? 'border-red-500/20 hover:border-red-500/40' : 'border-white/5 hover:border-amber-500/20'}`}>
                       <div className={`w-8 h-8 rounded flex items-center justify-center shrink-0 mt-0.5 border ${item.type === 'magic_item' ? 'bg-purple-900/30 border-purple-500/30 text-purple-400' : item.type === 'weapon' ? 'bg-red-900/20 border-red-500/30 text-red-400' : 'bg-amber-900/30 border-amber-500/30 text-amber-500/70'}`}>
                         {item.type === 'weapon' ? <Swords className="w-4 h-4" /> : item.type === 'magic_item' ? <Sparkles className="w-4 h-4" /> : <Package className="w-4 h-4" />}
                       </div>
                       <div className="min-w-0 flex-1">
-                        <span className={`text-sm font-medium block ${item.type === 'magic_item' ? 'text-purple-300' : item.type === 'weapon' ? 'text-red-200' : 'text-white'}`}>{item.name || item}</span>
+                        <span className={`text-sm font-medium block ${item.type === 'magic_item' ? 'text-purple-300' : item.type === 'weapon' ? 'text-red-200' : 'text-white'}`}>{item.name || 'Objeto sin nombre'}</span>
                         
                         {item.type === 'weapon' && (
                            <div className="flex gap-2 mt-1.5 mb-1">

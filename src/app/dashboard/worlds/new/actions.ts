@@ -32,7 +32,7 @@ export async function createWorld(formData: FormData) {
     creator_id: user.id
   }
 
-  const { data, error } = await supabase
+  const { error } = await supabase
     .from('worlds')
     .insert([worldData])
     .select()

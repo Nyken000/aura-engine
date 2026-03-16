@@ -3,12 +3,31 @@
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/utils/supabase/client'
-import { 
-  Users, Copy, Check, Crown, Sword, Play, 
-  LogOut, UserMinus, ChevronRight, Wifi, 
-  Shield, Zap, Scroll
+import {
+  Users,
+  Copy,
+  Check,
+  Crown,
+  Play,
+  LogOut,
+  UserMinus,
+  Wifi,
+  Shield,
+  Zap,
+  Scroll,
 } from 'lucide-react'
-import { startGameSession, kickPlayerFromSession, selectCharacterForSession, endGameSession } from '@/app/actions/sessions'
+import {
+  startGameSession,
+  kickPlayerFromSession,
+  selectCharacterForSession,
+  endGameSession,
+} from '@/app/actions/sessions'
+
+type CharacterStats = {
+  class?: string
+  race?: string
+  [key: string]: unknown
+}
 
 interface SessionPlayer {
   id: string
@@ -16,7 +35,7 @@ interface SessionPlayer {
   character_id: string | null
   status: string
   profiles: { id: string; username: string; avatar_url: string | null }
-  characters: { id: string; name: string; stats: any } | null
+  characters: { id: string; name: string; stats: CharacterStats } | null
 }
 
 interface GameSession {
@@ -33,14 +52,26 @@ interface GameSession {
 interface Character {
   id: string
   name: string
-  stats: any
+  stats: CharacterStats
+}
+
+interface CurrentUser {
+  id: string
+}
+
+interface SessionUpdatePayload {
+  new: {
+    id: string
+    status: string
+    turn_player_id?: string | null
+  }
 }
 
 interface Props {
   session: GameSession
   sessionPlayers: SessionPlayer[]
   myCharacters: Character[]
-  currentUser: any
+  currentUser: CurrentUser
   isHost: boolean
   myPlayer: SessionPlayer | null
 }
@@ -86,7 +117,7 @@ export default function SessionLobbyClient({
     if (data) {
       setPlayers(data as SessionPlayer[])
       // Also update our own player entry
-      const mine = data.find((p: any) => p.user_id === currentUser.id)
+      const mine = data.find((p: SessionPlayer) => p.user_id === currentUser.id)
       if (mine) setMyPlayer(mine as SessionPlayer)
     }
   }
@@ -137,7 +168,7 @@ export default function SessionLobbyClient({
         schema: 'public',
         table: 'game_sessions',
         filter: `id=eq.${session.id}`,
-      }, (payload: any) => {
+      }, (payload: SessionUpdatePayload) => {
         const updatedSession = payload.new
         setSession(prev => ({ ...prev, ...updatedSession }))
         if (updatedSession.status === 'active') {
@@ -178,8 +209,8 @@ export default function SessionLobbyClient({
     try {
       await selectCharacterForSession(session.id, characterId)
       setSelectedCharacterId(characterId)
-    } catch (e: any) {
-      setStatus(e.message)
+    } catch (error: unknown) {
+      setStatus(error instanceof Error ? error.message : 'Error inesperado')
     } finally {
       setSelecting(false)
     }
@@ -187,7 +218,7 @@ export default function SessionLobbyClient({
 
   const canStart = isHost && players.length >= 1 && players.every(p => p.character_id)
 
-  const getClassIcon = (stats: any) => {
+  const getClassIcon = (stats: CharacterStats | undefined) => {
     const cls = stats?.class?.toLowerCase() || ''
     if (['mago', 'wizard', 'hechicero', 'sorcerer', 'bardo'].some(c => cls.includes(c))) return '🧙‍♂️'
     if (['clérigo', 'cleric', 'paladin', 'druida'].some(c => cls.includes(c))) return '⚜️'

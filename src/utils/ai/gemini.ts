@@ -1,32 +1,45 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { GoogleGenerativeAI } from '@google/generative-ai'
 
-const apiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY;
-
-if (!apiKey) {
-  throw new Error("NEXT_PUBLIC_GEMINI_API_KEY is missing in .env.local");
+type WorldContext = {
+  id?: string
+  name: string
+  description: string
+  genre?: string | null
+  ai_rules?: string | null
 }
 
-const genAI = new GoogleGenerativeAI(apiKey);
+const apiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY
 
-// Using a model explicitly available to the API Key and with a higher free-tier quota limit
+if (!apiKey) {
+  throw new Error('NEXT_PUBLIC_GEMINI_API_KEY is missing in .env.local')
+}
+
+const genAI = new GoogleGenerativeAI(apiKey)
+
 export const geminiModel = genAI.getGenerativeModel({
-  model: "gemini-2.5-flash",
-});
+  model: 'gemini-2.5-flash',
+})
 
 export const geminiFlashModel = genAI.getGenerativeModel({
-  model: "gemini-2.5-flash",
-});
+  model: 'gemini-2.5-flash',
+})
 
-export async function generateLoreFriendlyBackstory(keywords: string, worldContext: any) {
+export async function generateLoreFriendlyBackstory(
+  keywords: string,
+  worldContext?: WorldContext,
+) {
   const prompt = `
     Eres un aclamado novelista de fantasía y un Dungeon Master de D&D.
     Tengo un jugador que quiere crear un personaje para una campaña.
     
-    ${worldContext ? `Contexto del mundo de la campaña:
+    ${worldContext
+      ? `Contexto del mundo de la campaña:
     Nombre: ${worldContext.name}
     Descripción: ${worldContext.description}
     Género: ${worldContext.genre || 'Fantasía'}
-    Reglas Especiales: ${worldContext.ai_rules || 'Ninguna'}` : `Contexto del mundo: Las Tierras Desconocidas (Un entorno de rol clásico de alta fantasía).`}
+    Reglas Especiales: ${worldContext.ai_rules || 'Ninguna'}`
+      : 'Contexto del mundo: Las Tierras Desconocidas (Un entorno de rol clásico de alta fantasía).'
+    }
 
     El jugador me dio estas palabras clave o ideas sueltas para su historia:
     "${keywords}"
@@ -34,18 +47,18 @@ export async function generateLoreFriendlyBackstory(keywords: string, worldConte
     Tu tarea: Escribe una historia de fondo (backstory) inmersiva, rica y épica de máximo tres párrafos cortos. 
     Debe conectar orgánicamente las ideas del jugador con el lore de este mundo específico.
     Usa un tono épico y de rol. Escribe directamente la historia, sin introducciones ("Aquí tienes la historia:", etc).
-  `;
+  `
 
   try {
-    const result = await geminiFlashModel.generateContent(prompt);
-    return result.response.text();
-  } catch (error) {
-    console.error("Error generating backstory:", error);
-    throw new Error("El Oráculo no pudo tejer esta historia. Inténtalo de nuevo.");
+    const result = await geminiFlashModel.generateContent(prompt)
+    return result.response.text()
+  } catch (error: unknown) {
+    console.error('Error generating backstory:', error)
+    throw new Error('El Oráculo no pudo tejer esta historia. Inténtalo de nuevo.')
   }
 }
 
-export async function analyzeStoryForStats(story: string, worldContext: any) {
+export async function analyzeStoryForStats(story: string, worldContext?: WorldContext) {
   const prompt = `
     Eres el "Oráculo de las Almas", un ente analítico y un Dungeon Master experto en D&D 5ta Edición.
     Un jugador me ha entregado la historia de vida de su personaje${worldContext ? ` para el mundo "${worldContext.name}"` : ''}.
@@ -117,21 +130,20 @@ export async function analyzeStoryForStats(story: string, worldContext: any) {
         "dex": "Razón", "con": "Razón", "int": "Razón", "wis": "Razón", "cha": "Razón"
       }
     }
-  `;
+  `
 
-    try {
-    const result = await geminiModel.generateContent(prompt);
-    let text = result.response.text();
-    
-    // Use regex to strictly extract the JSON object in case Gemini includes conversation
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
+  try {
+    const result = await geminiModel.generateContent(prompt)
+    const text = result.response.text()
+
+    const jsonMatch = text.match(/\{[\s\S]*\}/)
     if (!jsonMatch) {
-        throw new Error("El Oráculo no devolvió un formato válido.");
+      throw new Error('El Oráculo no devolvió un formato válido.')
     }
-    
-    return JSON.parse(jsonMatch[0].trim());
-  } catch (error) {
-    console.error("Error analyzing stats:", error);
-    throw new Error("El Oráculo no pudo leer tu destino. Revisa la historia.");
+
+    return JSON.parse(jsonMatch[0].trim()) as Record<string, unknown>
+  } catch (error: unknown) {
+    console.error('Error analyzing stats:', error)
+    throw new Error('El Oráculo no pudo leer tu destino. Revisa la historia.')
   }
 }

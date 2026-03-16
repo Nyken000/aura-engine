@@ -83,9 +83,9 @@ export async function uploadRuleBook(formData: FormData) {
     revalidatePath('/dashboard/library')
     return { success: true, state: geminiState }
 
-  } catch (err: any) {
-    console.error('Rule book upload error:', err)
-    return { error: err.message || 'Error desconocido al subir el archivo.' }
+  } catch (error: unknown) {
+    console.error('Rule book upload error:', error)
+    return { error: error instanceof Error ? error.message : 'Error desconocido al subir el archivo.' }
   }
 }
 
@@ -111,8 +111,8 @@ export async function deleteRuleBook(bookId: string) {
 
     revalidatePath('/dashboard/library')
     return { success: true }
-  } catch (err: any) {
-    return { error: err.message }
+  } catch (error: unknown) {
+    return { error: error instanceof Error ? error.message : 'Error desconocido' }
   }
 }
 

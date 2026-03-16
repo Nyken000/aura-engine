@@ -1,38 +1,93 @@
 import { geminiModel } from './gemini'
 import { type Campaign } from '@/utils/game/campaigns'
 
-// Types for the Engine
+type InventoryItem = {
+  name: string
+  type?: string
+  description?: string
+}
+
+type CharacterStats = {
+  race?: string
+  class?: string
+  str?: number
+  dex?: number
+  con?: number
+  int?: number
+  wis?: number
+  cha?: number
+}
+
+type CharacterContext = {
+  name: string
+  hp_current?: number
+  hp_max?: number
+  stats?: CharacterStats | null
+  skills?: string[] | null
+  inventory?: InventoryItem[] | null
+}
+
+type WorldContext = {
+  name: string
+  description: string
+}
+
+type HistoryEvent = {
+  role: 'user' | 'assistant' | 'system'
+  content: string
+  characters?: {
+    name?: string
+  } | null
+}
+
+type CombatEnemy = {
+  name: string
+  hp: number
+  max_hp: number
+  ac: number
+  initiative: number
+  is_player: boolean
+}
+
 export interface TurnContext {
-  character: any;
-  world: any;
-  campaign: Campaign | null;
-  playerAction: string;
-  recentHistory: any[]; // The last 5-10 messages for context
+  character: CharacterContext
+  world: WorldContext
+  campaign: Campaign | null
+  playerAction: string
+  recentHistory: HistoryEvent[]
 }
 
 export interface GMEvaluation {
-  narrative_response: string;
+  narrative_response: string
   state_changes: {
-    hp_delta: number;
-    inventory_added: string[];
-    inventory_removed: string[];
-    skills_used: string[];
-  };
+    hp_delta: number
+    inventory_added: string[]
+    inventory_removed: string[]
+    skills_used: string[]
+  }
   combat: {
-    in_combat: boolean;
-    initiative_requested: boolean;
-  };
+    in_combat: boolean
+    initiative_requested: boolean
+    enemies?: CombatEnemy[]
+  }
   dice_roll_required?: {
-    needed: boolean;
-    die: string;
-    stat: string;
-    skill: string | null;
-    dc: number;
-    flavor: string;
-  } | null;
+    needed: boolean
+    die: string
+    stat: string
+    skill: string | null
+    dc: number
+    flavor: string
+  } | null
 }
 
-export async function generateOpeningMonologue(character: any, campaign: Campaign, world: any): Promise<string> {
+export async function generateOpeningMonologue(
+  character: CharacterContext,
+  campaign: Campaign,
+  world: WorldContext,
+): Promise<string> {
+  const passiveTrait =
+    character.inventory?.find((item) => item.type === 'passive')?.description || 'Ninguno'
+
   const prompt = `
     Eres un escritor de novelas épicas y el Game Master de esta campaña de rol.
     
@@ -47,7 +102,7 @@ export async function generateOpeningMonologue(character: any, campaign: Campaig
     - Nombre: ${character.name}
     - Raza: ${character.stats?.race || 'Desconocida'}
     - Clase: ${character.stats?.class || 'Aventurero'}
-    - Rasgo Único: ${character.inventory?.find((i:any) => i.type === 'passive')?.description || 'Ninguno'}
+    - Rasgo Único: ${passiveTrait}
 
     TU TAREA:
     Escribe el PRÓLOGO épico de la aventura. Este es el primer texto que leerá el jugador. 
@@ -60,16 +115,21 @@ export async function generateOpeningMonologue(character: any, campaign: Campaig
     
     Responde ÚNICA Y EXCLUSIVAMENTE con el prólogo narrativo. Sin notas, sin saludos, sin metadatos, sin JSON. Solo el texto de la historia.
   `
+
   const result = await geminiModel.generateContent(prompt)
   return result.response.text()
 }
 
 export async function evaluateActionWithGM(context: TurnContext): Promise<GMEvaluation> {
-  const historyText = context.recentHistory.map(evt => 
-    `[${evt.role.toUpperCase()}${evt.characters?.name ? ` - ${evt.characters.name}` : ''}]: ${evt.content}`
-  ).join('\n')
+  const historyText = context.recentHistory
+    .map(
+      (event) =>
+        `[${event.role.toUpperCase()}${event.characters?.name ? ` - ${event.characters.name}` : ''}]: ${event.content}`,
+    )
+    .join('\n')
 
-  const campaignContext = context.campaign ? `
+  const campaignContext = context.campaign
+    ? `
     === CAMPAÑA ACTIVA: "${context.campaign.title}" ===
     Premisa: ${context.campaign.description}
     OBJETIVO PRINCIPAL DEL JUGADOR: ${context.campaign.main_quest}
@@ -77,7 +137,11 @@ export async function evaluateActionWithGM(context: TurnContext): Promise<GMEval
     NPCs Claves que puedes introducir cuando sea natural: 
     ${context.campaign.key_npcs.join('\n    ')}
     ===
-  ` : ''
+  `
+    : ''
+
+  const equipmentText =
+    (context.character.inventory || []).map((item) => item.name).join(', ') || 'Nada'
 
   const prompt = `
     Eres el Game Master de una aventura de mesa basada en D&D 5E.
@@ -92,7 +156,7 @@ export async function evaluateActionWithGM(context: TurnContext): Promise<GMEval
     - HP: ${context.character.hp_current}/${context.character.hp_max}
     - Stats: STR ${context.character.stats?.str}, DEX ${context.character.stats?.dex}, CON ${context.character.stats?.con}, INT ${context.character.stats?.int}, WIS ${context.character.stats?.wis}, CHA ${context.character.stats?.cha}
     - Competencias: ${(context.character.skills || []).join(', ') || 'Ninguna'}
-    - Equipamiento: ${(context.character.inventory || []).map((i:any) => i.name).join(', ') || 'Nada'}
+    - Equipamiento: ${equipmentText}
 
     HISTORIAL RECIENTE:
     ${historyText}
@@ -134,7 +198,7 @@ export async function evaluateActionWithGM(context: TurnContext): Promise<GMEval
   `
 
   const result = await geminiModel.generateContent(prompt)
-  let text = result.response.text()
+  const text = result.response.text()
 
   const jsonMatch = text.match(/\{[\s\S]*\}/)
   if (!jsonMatch) {
@@ -142,10 +206,9 @@ export async function evaluateActionWithGM(context: TurnContext): Promise<GMEval
   }
 
   try {
-    const evaluation = JSON.parse(jsonMatch[0]) as GMEvaluation
-    return evaluation
-  } catch (err: any) {
-    console.error("Failed to parse GM result:", text)
-    throw new Error("El Oráculo envió una respuesta incomprensible.")
+    return JSON.parse(jsonMatch[0]) as GMEvaluation
+  } catch {
+    console.error('Failed to parse GM result:', text)
+    throw new Error('El Oráculo envió una respuesta incomprensible.')
   }
 }

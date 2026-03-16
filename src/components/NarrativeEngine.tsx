@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useCharacterStore } from "@/store/characterStore";
 import { rollD20, evaluateDifficulty } from "@/lib/dice";
-import { Send, Shield, BookOpen, Skull, Search, AlertTriangle, Dice6, User } from "lucide-react";
+import { Send, Shield, BookOpen, AlertTriangle, Dice6, User } from "lucide-react";
 
 type Message = {
   id: string;
@@ -12,6 +12,29 @@ type Message = {
   content: string;
   diceRoll?: number;
 };
+
+type DiceResult = {
+  total: number
+  roll: number
+  modifier: number
+}
+
+type StateStatChange = {
+  stat: string
+  change: number
+}
+
+type EngineResponse = {
+  error?: string
+  narrative: string
+  stateChanges?: {
+    suspicionChange?: number
+    credibilityChange?: number
+    inventoryAdd?: string[]
+    inventoryRemove?: string[]
+    stats?: StateStatChange[]
+  }
+}
 
 export default function NarrativeEngine() {
   const [messages, setMessages] = useState<Message[]>([
@@ -42,8 +65,8 @@ export default function NarrativeEngine() {
     setLoading(true);
 
     // Evaluate difficulty for dice check
-    let diceResultValue = null;
-    let diceResultData = null;
+    let diceResultValue: number | null = null
+    let diceResultData: DiceResult | null = null
     if (evaluateDifficulty(userMessage.content)) {
       diceResultData = rollD20(0); // Add dynamic modifiers later based on stats
       diceResultValue = diceResultData.total;
@@ -76,7 +99,7 @@ export default function NarrativeEngine() {
         })
       });
 
-      const data = await response.json();
+      const data = (await response.json()) as EngineResponse
       
       if (data.error) throw new Error(data.error);
 
@@ -91,7 +114,7 @@ export default function NarrativeEngine() {
           data.stateChanges.inventoryRemove.forEach((item: string) => character.removeFromInventory(item));
         }
         if (data.stateChanges.stats) {
-          data.stateChanges.stats.forEach((s: any) => {
+          data.stateChanges.stats.forEach((s: StateStatChange) => {
              // Basic stat update handling or initialization check
              const currentVal = character.stats[s.stat] || 10;
              character.updateStat(s.stat, currentVal + s.change);
@@ -105,8 +128,8 @@ export default function NarrativeEngine() {
         content: data.narrative
       }]);
 
-    } catch (err: any) {
-      console.error(err);
+    } catch (error: unknown) {
+      console.error(error);
       setMessages(prev => [...prev, {
         id: Date.now().toString(),
         role: "dm",

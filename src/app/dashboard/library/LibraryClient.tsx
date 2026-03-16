@@ -219,7 +219,7 @@ export default function LibraryClient({ initialBooks }: { initialBooks: RuleBook
           </div>
           <div className="text-center">
             <p className="font-display text-parchment-300 font-bold">La biblioteca está vacía</p>
-            <p className="text-sm text-foreground/40 mt-1">Sube el Player's Handbook para empezar</p>
+            <p className="text-sm text-foreground/40 mt-1">Sube el Player&apos;s Handbook para empezar</p>
           </div>
         </div>
       ) : (

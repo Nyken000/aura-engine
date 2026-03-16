@@ -5,100 +5,153 @@ import { evaluateActionWithGM } from '@/utils/ai/engine'
 import { getCampaignById } from '@/utils/game/campaigns'
 import { revalidatePath } from 'next/cache'
 
-export async function submitChatAction(characterId: string, content: string, type: 'adventure' | 'group' = 'adventure', sessionId?: string | null) {
+type InventoryItem = {
+  name: string
+  type?: string
+  description?: string
+}
+
+type CharacterRecord = {
+  id: string
+  user_id: string
+  name: string
+  world_id: string | null
+  campaign_id: string | null
+  hp_current: number
+  hp_max: number
+  inventory: InventoryItem[] | null
+  worlds?: {
+    id: string
+    name: string
+    description: string
+  } | null
+}
+
+type EvaluationStateChanges = {
+  hp_delta?: number
+  inventory_added?: string[]
+  inventory_removed?: string[]
+}
+
+type EvaluationResult = {
+  narrative_response: string
+  dice_roll_required?: unknown
+  state_changes?: EvaluationStateChanges | null
+}
+
+export async function submitChatAction(
+  characterId: string,
+  content: string,
+  type: 'adventure' | 'group' = 'adventure',
+  sessionId?: string | null,
+  clientEventId?: string,
+) {
   const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
 
   if (!user) return { error: 'No autorizado' }
 
-  // 1. Fetch Character (including campaign_id)
   const { data: character } = await supabase
     .from('characters')
     .select('*, worlds(*)')
     .eq('id', characterId)
     .single()
 
-  if (!character) return { error: 'Personaje no encontrado' }
+  const typedCharacter = character as CharacterRecord | null
 
-  const world = character.worlds
-  if (character.user_id !== user.id) return { error: 'No autorizado para usar este personaje' }
+  if (!typedCharacter) return { error: 'Personaje no encontrado' }
+  if (typedCharacter.user_id !== user.id) return { error: 'No autorizado para usar este personaje' }
 
-  // 2. Resolve the campaign for this character
-  const campaign = character.campaign_id ? getCampaignById(character.campaign_id) : null
+  const world = typedCharacter.worlds
+  const campaign = typedCharacter.campaign_id ? getCampaignById(typedCharacter.campaign_id) : null
+  const messageContent = type === 'group' ? `[OOC] ${content}` : content
 
-  // 3. Build message content (tag OOC messages)
-  let messageContent = type === 'group' ? `[OOC] ${content}` : content
-
-  // 4. Insert user message
-  await supabase
-    .from('narrative_events')
-    .insert([{
+  await supabase.from('narrative_events').insert([
+    {
       world_id: world?.id ?? null,
-      character_id: character.id,
+      character_id: typedCharacter.id,
       session_id: sessionId ?? null,
       role: 'user',
-      content: messageContent
-    }])
+      content: messageContent,
+      client_event_id: clientEventId ?? null,
+      event_type: type === 'group' ? 'group_message' : 'player_message',
+      payload: {
+        sender_name: typedCharacter.name,
+        channel: type,
+      },
+    },
+  ])
 
-  // 5. Skip AI for group chat
   if (type === 'group') {
     revalidatePath(`/play/${characterId}`)
     return { success: true }
   }
 
-  // 6. Fetch recent in-character events for context — filtered to THIS character
   const { data: recentEvents } = await supabase
     .from('narrative_events')
-    .select('*, characters(name)')
-    .eq('character_id', character.id)
+    .select('*')
+    .eq('character_id', typedCharacter.id)
     .order('created_at', { ascending: false })
     .limit(8)
 
-  // 7. Call AI GM with full campaign context
   try {
-    const aiEvaluation = await evaluateActionWithGM({
-      character,
-      world,
+    const aiEvaluation = (await evaluateActionWithGM({
+      character: typedCharacter,
+      world: world || { name: 'Desconocido', description: 'Un lugar sin nombre en el multiverso.' },
       campaign: campaign || null,
       playerAction: content,
-      recentHistory: (recentEvents || []).reverse()
-    })
+      recentHistory: (recentEvents || []).reverse(),
+    })) as EvaluationResult
 
-    // 8. Apply stat changes
-    let newHp = (character.hp_current || character.hp_max) + (aiEvaluation.state_changes?.hp_delta || 0)
-    if (newHp > character.hp_max) newHp = character.hp_max
+    let newHp =
+      (typedCharacter.hp_current || typedCharacter.hp_max) + (aiEvaluation.state_changes?.hp_delta || 0)
+
+    if (newHp > typedCharacter.hp_max) newHp = typedCharacter.hp_max
     if (newHp < 0) newHp = 0
 
-    let currentInventory = character.inventory || []
-    aiEvaluation.state_changes?.inventory_added?.forEach((item: string) => {
+    const currentInventory: InventoryItem[] = Array.isArray(typedCharacter.inventory)
+      ? [...typedCharacter.inventory]
+      : []
+
+    aiEvaluation.state_changes?.inventory_added?.forEach((item) => {
       currentInventory.push({ name: item, type: 'item' })
     })
-    aiEvaluation.state_changes?.inventory_removed?.forEach((target: string) => {
-      const idx = currentInventory.findIndex((i: any) => i.name.toLowerCase().includes(target.toLowerCase()))
+
+    aiEvaluation.state_changes?.inventory_removed?.forEach((target) => {
+      const idx = currentInventory.findIndex((item) =>
+        String(item.name || '')
+          .toLowerCase()
+          .includes(target.toLowerCase()),
+      )
+
       if (idx > -1) currentInventory.splice(idx, 1)
     })
 
     await supabase
       .from('characters')
       .update({ hp_current: newHp, inventory: currentInventory })
-      .eq('id', character.id)
+      .eq('id', typedCharacter.id)
 
-    // 9. Insert GM narrative response — linked to THIS character
-    await supabase
-      .from('narrative_events')
-      .insert([{
+    await supabase.from('narrative_events').insert([
+      {
         world_id: world?.id ?? null,
-        character_id: character.id,
+        character_id: typedCharacter.id,
         role: 'assistant',
         content: aiEvaluation.narrative_response,
-        dice_roll_required: aiEvaluation.dice_roll_required
-      }])
+        dice_roll_required: aiEvaluation.dice_roll_required ?? null,
+        event_type: 'gm_message',
+        payload: {
+          sender_name: 'Game Master',
+        },
+      },
+    ])
 
     revalidatePath(`/play/${characterId}`)
     return { success: true, evaluation: aiEvaluation }
-
-  } catch (error: any) {
-    console.error("Engine evaluation failed:", error)
+  } catch (error: unknown) {
+    console.error('Engine evaluation failed:', error instanceof Error ? error.message : error)
     return { error: 'El Oráculo falló al leer el destino. Intenta de nuevo.' }
   }
 }

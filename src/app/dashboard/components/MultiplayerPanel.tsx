@@ -38,8 +38,8 @@ export default function MultiplayerPanel({ worlds, activeSessions, currentUserId
     fd.set('max_players', String(maxPlayers))
     try {
       await createGameSession(fd)
-    } catch (err: any) {
-      setError(err.message)
+    } catch (error: unknown) {
+      setError(error instanceof Error ? error.message : 'Error inesperado')
       setLoading(false)
     }
   }
@@ -52,8 +52,8 @@ export default function MultiplayerPanel({ worlds, activeSessions, currentUserId
     fd.set('invite_code', joinCode)
     try {
       await joinGameSession(fd)
-    } catch (err: any) {
-      setError(err.message)
+    } catch (error: unknown) {
+      setError(error instanceof Error ? error.message : 'Error inesperado')
       setLoading(false)
     }
   }

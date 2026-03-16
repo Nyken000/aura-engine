@@ -1,24 +1,56 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
-import { NextResponse } from "next/server";
+import { GoogleGenerativeAI } from '@google/generative-ai'
+import { NextResponse } from 'next/server'
 
-const apiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY || "";
-const genAI = new GoogleGenerativeAI(apiKey);
+const apiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY || ''
+const genAI = new GoogleGenerativeAI(apiKey)
+
+type EnginePreviousMessage = {
+  role: 'user' | 'assistant' | 'system'
+  content: string
+}
+
+type EngineCharacter = {
+  name: string
+  stats: Record<string, unknown>
+  inventory: unknown[]
+  suspicion: number
+  credibility: number
+}
+
+type DiceResult = {
+  total: number
+  roll: number
+  modifier: number
+}
+
+type EngineRequestBody = {
+  action: string
+  character: EngineCharacter
+  globalState: Record<string, unknown>
+  previousMessages: EnginePreviousMessage[]
+  diceResult?: DiceResult | null
+}
 
 export async function POST(req: Request) {
   try {
-    const { action, character, globalState, previousMessages, diceResult } = await req.json();
+    const {
+      action,
+      character,
+      globalState,
+      previousMessages,
+      diceResult,
+    }: EngineRequestBody = await req.json()
 
     if (!apiKey) {
-      return NextResponse.json({ error: "Gemini API key is missing." }, { status: 500 });
+      return NextResponse.json({ error: 'Gemini API key is missing.' }, { status: 500 })
     }
 
-    // Gemini 1.5 Flash Model
     const model = genAI.getGenerativeModel({
-      model: "gemini-1.5-flash",
+      model: 'gemini-1.5-flash',
       generationConfig: {
-        responseMimeType: "application/json",
-      }
-    });
+        responseMimeType: 'application/json',
+      },
+    })
 
     const systemPrompt = `
 You are the Dungeon Master (DM) for "Aura", a dark medieval fantasy RPG. 
@@ -36,7 +68,7 @@ ${JSON.stringify(globalState)}
 
 DICE ARBITRATION:
 If the player attempted a difficult/risky action, a dice result may be provided:
-${diceResult ? `DICE RESULT: ${diceResult.total} (Base: ${diceResult.roll} + Modifier: ${diceResult.modifier})` : "No dice rolled for this action."}
+${diceResult ? `DICE RESULT: ${diceResult.total} (Base: ${diceResult.roll} + Modifier: ${diceResult.modifier})` : 'No dice rolled for this action.'}
 If a dice result is provided, YOU MUST treat it as absolute. A low roll means failure/consequences. A high roll means success.
 
 YOUR TASK:
@@ -47,47 +79,38 @@ You must return a raw JSON object with NO markdown wrapping, following this sche
 {
   "narrative": "The story text to show the player. Use HTML for line breaks if needed.",
   "stateChanges": {
-    "stats": [{"stat": "Health", "change": -5}], // Optional changes to stats
-    "inventoryAdd": ["Iron Key"], // Optional items added
-    "inventoryRemove": ["Gold Coin"], // Optional items removed
-    "suspicionChange": 5, // Positive to increase suspicion, negative to decrease
-    "credibilityChange": -2 // Positive to increase, negative to decrease
+    "stats": [{"stat": "Health", "change": -5}],
+    "inventoryAdd": ["Iron Key"],
+    "inventoryRemove": ["Gold Coin"],
+    "suspicionChange": 5,
+    "credibilityChange": -2
   },
-  "globalStateChanges": {
-    // Optional key-value pairs to update global state (e.g., "tavern_burned": true)
-  },
-  "newMemoriesToStore": [
-    // Optional array of string summaries of IMPORTANT events/lies/secrets established in this turn to save in RAG memory
-  ]
+  "globalStateChanges": {},
+  "newMemoriesToStore": []
 }
-`;
+`
 
-    // Construct the conversation history for Gemini
-    const history = previousMessages.map((msg: any) => ({
+    const history = previousMessages.map((msg) => ({
       role: msg.role === 'user' ? 'user' : 'model',
       parts: [{ text: msg.content }],
-    }));
+    }))
 
-    // Add the current action to history
     history.push({
-      role: "user",
+      role: 'user',
       parts: [{ text: `Player Action: ${action}` }],
-    });
+    })
 
     const result = await model.generateContent({
-      contents: [
-         { role: "user", parts: [{ text: systemPrompt }] },
-         ...history
-      ]
-    });
+      contents: [{ role: 'user', parts: [{ text: systemPrompt }] }, ...history],
+    })
 
-    const responseText = result.response.text();
-    const jsonResponse = JSON.parse(responseText);
+    const responseText = result.response.text()
+    const jsonResponse = JSON.parse(responseText) as Record<string, unknown>
 
-    return NextResponse.json(jsonResponse);
-
-  } catch (error: any) {
-    console.error("AI Engine Error:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json(jsonResponse)
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown AI engine error'
+    console.error('AI Engine Error:', message)
+    return NextResponse.json({ error: message }, { status: 500 })
   }
 }
