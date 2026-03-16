@@ -329,6 +329,22 @@ function mergeEvent(prev: NarrativeEvent[], incoming: NarrativeEvent) {
   return sortEvents(next)
 }
 
+function getHighestEventIndex(events: NarrativeEvent[]) {
+  return events.reduce<number | null>((highest, event) => {
+    if (typeof event.event_index !== 'number') return highest
+    return highest === null ? event.event_index : Math.max(highest, event.event_index)
+  }, null)
+}
+
+function shouldRefreshEventGap(prev: NarrativeEvent[], incoming: NarrativeEvent) {
+  if (typeof incoming.event_index !== 'number') return false
+
+  const highest = getHighestEventIndex(prev)
+  if (highest === null) return false
+
+  return incoming.event_index > highest + 1
+}
+
 function filterVisibleEvents(events: NarrativeEvent[], tab: 'adventure' | 'group') {
   return events.filter((event) => {
     const isOoc =
@@ -380,7 +396,7 @@ export default function GameClient({
   const [pendingDiceRoll, setPendingDiceRoll] = useState<DiceRollRequired | null>(null)
   const [pendingAssistantClientEventId, setPendingAssistantClientEventId] = useState<string | null>(null)
   const [chatTab, setChatTab] = useState<'adventure' | 'group'>('adventure')
-  const [activeSessionPlayers] = useState<SessionPlayer[]>(sessionPlayers || [])
+  const [activeSessionPlayers, setActiveSessionPlayers] = useState<SessionPlayer[]>(sessionPlayers || [])
   const [liveSession, setLiveSession] = useState<SessionData | null>(session || null)
   const [liveSessionCombat, setLiveSessionCombat] = useState<SessionCombatState | null>(sessionCombatState || null)
   const chatEndRef = useRef<HTMLDivElement>(null)
@@ -388,6 +404,12 @@ export default function GameClient({
   useEffect(() => {
     setEvents(sortEvents(initialEvents || []))
   }, [initialEvents])
+
+  useEffect(() => {
+    setActiveSessionPlayers(sessionPlayers || [])
+    setLiveSession(session || null)
+    setLiveSessionCombat(sessionCombatState || null)
+  }, [sessionPlayers, session, sessionCombatState])
 
   useEffect(() => {
     if (!session?.id) return
@@ -403,7 +425,14 @@ export default function GameClient({
           filter: `session_id=eq.${session.id}`,
         },
         (payload: RealtimeInsertPayload<NarrativeEvent>) => {
-          setEvents((prev) => mergeEvent(prev, payload.new))
+          let shouldRefresh = false
+
+          setEvents((prev) => {
+            shouldRefresh = shouldRefreshEventGap(prev, payload.new)
+            return mergeEvent(prev, payload.new)
+          })
+
+          if (shouldRefresh) router.refresh()
         },
       )
       .on(
@@ -415,7 +444,14 @@ export default function GameClient({
           filter: `session_id=eq.${session.id}`,
         },
         (payload: RealtimeUpdatePayload<NarrativeEvent>) => {
-          setEvents((prev) => mergeEvent(prev, payload.new))
+          let shouldRefresh = false
+
+          setEvents((prev) => {
+            shouldRefresh = shouldRefreshEventGap(prev, payload.new)
+            return mergeEvent(prev, payload.new)
+          })
+
+          if (shouldRefresh) router.refresh()
         },
       )
       .on(
@@ -439,7 +475,20 @@ export default function GameClient({
           filter: `session_id=eq.${session.id}`,
         },
         (payload: RealtimeUpdatePayload<SessionCombatState>) => {
-          setLiveSessionCombat(payload.new)
+          let shouldRefresh = false
+
+          setLiveSessionCombat((prev) => {
+            shouldRefresh =
+              !prev ||
+              prev.status !== payload.new.status ||
+              prev.round !== payload.new.round ||
+              prev.turn_index !== payload.new.turn_index ||
+              prev.participants.length !== payload.new.participants.length
+
+            return payload.new
+          })
+
+          if (shouldRefresh) router.refresh()
         },
       )
       .on(
@@ -452,6 +501,7 @@ export default function GameClient({
         },
         (payload: RealtimeInsertPayload<SessionCombatState>) => {
           setLiveSessionCombat(payload.new)
+          router.refresh()
         },
       )
       .on(

@@ -333,3 +333,107 @@ test("active shared combat can be rehydrated after refresh without drifting hp, 
         "Envenenado",
     );
 });
+
+
+
+test("two refreshed clients submitting the same missing initiative converge to the same active shared state", () => {
+    const baseState = buildInitiativeState();
+
+    const partiallyResolved = registerSessionInitiative({
+        currentState: baseState,
+        userId: "user-1",
+        rolledInitiative: 17,
+    });
+
+    const refreshedSnapshotA = structuredClone(partiallyResolved.combatState);
+    const refreshedSnapshotB = structuredClone(partiallyResolved.combatState);
+
+    const resolutionA = registerSessionInitiative({
+        currentState: refreshedSnapshotA,
+        userId: "user-2",
+        rolledInitiative: 11,
+    });
+
+    const resolutionB = registerSessionInitiative({
+        currentState: refreshedSnapshotB,
+        userId: "user-2",
+        rolledInitiative: 11,
+    });
+
+    assert.equal(resolutionA.awaitingMoreInitiatives, false);
+    assert.equal(resolutionB.awaitingMoreInitiatives, false);
+    assert.equal(resolutionA.turnPlayerId, "user-1");
+    assert.equal(resolutionB.turnPlayerId, "user-1");
+    assert.deepEqual(resolutionA.combatState, resolutionB.combatState);
+});
+
+test("two refreshed clients hydrating the same active state preserve hp, turn and conditions identically", () => {
+    const activeState: SessionCombatStateRecord = {
+        session_id: "session-1",
+        status: "active",
+        round: 2,
+        turn_index: 1,
+        participants: [
+            {
+                id: "player:user-1",
+                user_id: "user-1",
+                character_id: "char-1",
+                name: "Kael",
+                hp: 14,
+                max_hp: 20,
+                ac: 15,
+                initiative: 17,
+                is_player: true,
+                is_defeated: false,
+                conditions: [
+                    {
+                        id: "poisoned",
+                        name: "Envenenado",
+                        duration_rounds: 2,
+                        applied_at_round: 2,
+                        applied_by_participant_id: "enemy:Goblin Captain:0",
+                        source: "Daga envenenada",
+                        summary: "Sufre desventaja en tiradas de ataque.",
+                    },
+                ],
+            },
+            {
+                id: "player:user-2",
+                user_id: "user-2",
+                character_id: "char-2",
+                name: "Lyra",
+                hp: 18,
+                max_hp: 18,
+                ac: 14,
+                initiative: 11,
+                is_player: true,
+                is_defeated: false,
+                conditions: [],
+            },
+        ],
+    };
+
+    const refreshedA = structuredClone(activeState);
+    const refreshedB = structuredClone(activeState);
+
+    const updatedA = applyCharacterHpToSessionCombat({
+        currentState: refreshedA,
+        characterId: "char-1",
+        hp: 10,
+        maxHp: 20,
+    });
+
+    const updatedB = applyCharacterHpToSessionCombat({
+        currentState: refreshedB,
+        characterId: "char-1",
+        hp: 10,
+        maxHp: 20,
+    });
+
+    assert.deepEqual(updatedA, updatedB);
+    assert.equal(updatedA.turn_index, 1);
+    assert.equal(updatedA.round, 2);
+    assert.equal(updatedA.participants[0].hp, 10);
+    assert.equal(updatedA.participants[0].conditions?.[0]?.name, "Envenenado");
+});
+
