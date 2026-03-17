@@ -37,6 +37,7 @@ export function currentCombatToPromptState(
   if (sessionCombatState && sessionCombatState.status !== 'idle' && sessionCombatState.status !== 'ended') {
     return {
       in_combat: true,
+      round: sessionCombatState.round,
       turn: sessionCombatState.turn_index,
       participants: safeArray(sessionCombatState.participants),
     }
@@ -44,6 +45,7 @@ export function currentCombatToPromptState(
 
   return characterCombatState ?? {
     in_combat: false,
+    round: 1,
     turn: 0,
     participants: [],
   }
@@ -377,4 +379,36 @@ export function endSessionCombat(currentState: SessionCombatStateRecord): Sessio
     turn_index: 0,
     participants: cloneSessionCombatParticipants(currentState.participants),
   }
+}
+
+export function computeCombatRoundTurnLabel(state: SessionCombatStateRecord): string {
+  const active = state.participants[state.turn_index]
+  if (!active) return `Ronda ${state.round}`
+  return `Ronda ${state.round}, turno de ${active.name}`
+}
+
+export function updateSessionCombatStateFromModel(params: {
+  currentState: SessionCombatStateRecord
+  update: any
+  sessionPlayers: SessionPlayerRow[]
+}): SessionCombatStateRecord {
+  const { currentState, update, sessionPlayers } = params
+  let nextState = { ...currentState }
+
+  if (typeof update.round === 'number') {
+    nextState.round = update.round
+  }
+  if (typeof update.turn_index === 'number') {
+    nextState.turn_index = update.turn_index
+  }
+
+  if (Array.isArray(update.participants)) {
+    nextState.participants = upsertSessionCombatParticipants({
+      currentParticipants: nextState.participants,
+      sessionPlayers,
+      enemies: update.participants,
+    })
+  }
+
+  return nextState
 }

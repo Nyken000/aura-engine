@@ -11,11 +11,13 @@ export type CombatEventType =
     | 'damage_applied'
     | 'healing_applied'
     | 'condition_applied'
+    | 'condition_removed'
     | 'combat_ended'
 
 export type CombatParticipantReference = {
     participant_id?: string | null
     character_id?: string | null
+    user_id?: string | null
     name?: string | null
 }
 
@@ -50,6 +52,13 @@ export type ConditionAppliedResolution = {
     summary?: string | null
 }
 
+export type ConditionRemovedResolution = {
+    actor?: CombatParticipantReference | null
+    target: CombatParticipantReference
+    condition_name: string
+    summary?: string | null
+}
+
 export type CombatEndedResolution = {
     summary?: string | null
     winner_side?: 'players' | 'enemies' | 'none' | 'unknown' | null
@@ -60,6 +69,7 @@ export type CombatEventResolution = {
     damage_applied?: DamageAppliedResolution | null
     healing_applied?: HealingAppliedResolution | null
     condition_applied?: ConditionAppliedResolution | null
+    condition_removed?: ConditionRemovedResolution | null
     combat_ended?: CombatEndedResolution | null
 } | null
 
@@ -527,6 +537,7 @@ export async function persistSessionCombatEvents(
 
     if (resolution.combat_ended) {
         combatEnded = true
+        nextState.status = 'ended'
 
         insertRows.push({
             world_id: worldId ?? null,

@@ -1,4 +1,4 @@
-import { geminiModel } from './gemini'
+import { generateAiText, generateAiJson, type AiChatMessage } from '@/lib/ai/provider'
 import { type Campaign } from '@/utils/game/campaigns'
 
 type InventoryItem = {
@@ -116,8 +116,7 @@ export async function generateOpeningMonologue(
     Responde ÚNICA Y EXCLUSIVAMENTE con el prólogo narrativo. Sin notas, sin saludos, sin metadatos, sin JSON. Solo el texto de la historia.
   `
 
-  const result = await geminiModel.generateContent(prompt)
-  return result.response.text()
+  return await generateAiText({ prompt, temperature: 0.7 })
 }
 
 export async function evaluateActionWithGM(context: TurnContext): Promise<GMEvaluation> {
@@ -143,7 +142,7 @@ export async function evaluateActionWithGM(context: TurnContext): Promise<GMEval
   const equipmentText =
     (context.character.inventory || []).map((item) => item.name).join(', ') || 'Nada'
 
-  const prompt = `
+  const systemPrompt = `
     Eres el Game Master de una aventura de mesa basada en D&D 5E.
     Mundo: "${context.world.name}" - ${context.world.description}
     
@@ -160,9 +159,6 @@ export async function evaluateActionWithGM(context: TurnContext): Promise<GMEval
 
     HISTORIAL RECIENTE:
     ${historyText}
-
-    NUEVA ACCIÓN DEL JUGADOR (${context.character.name}):
-    "${context.playerAction}"
 
     TU TAREA:
     Resuelve la acción del jugador de manera justa pero dramática, siempre avanzando la narrativa de la campaña.
@@ -197,8 +193,16 @@ export async function evaluateActionWithGM(context: TurnContext): Promise<GMEval
     { "needed": true, "die": "d20", "stat": "DEX", "skill": "Acrobacias", "dc": 14, "flavor": "Tira para saltar el abismo" }
   `
 
-  const result = await geminiModel.generateContent(prompt)
-  const text = result.response.text()
+  const messages: AiChatMessage[] = [
+    { role: 'system', content: systemPrompt },
+    { role: 'user', content: `NUEVA ACCIÓN DEL JUGADOR (${context.character.name}): "${context.playerAction}"` }
+  ]
+
+  const text = await generateAiJson({
+    messages,
+    temperature: 0,
+    format: 'json'
+  })
 
   const jsonMatch = text.match(/\{[\s\S]*\}/)
   if (!jsonMatch) {

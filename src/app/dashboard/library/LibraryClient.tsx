@@ -13,12 +13,14 @@ type RuleBook = {
   description: string | null
   file_name: string
   file_size: number | null
-  gemini_state: string
+  processing_state: string
+  processing_error?: string | null
+  chunk_count?: number | null
   created_at: string
 }
 
 const STATE_CONFIG = {
-  ACTIVE:      { icon: CheckCircle, color: 'text-emerald-400', bg: 'bg-emerald-500/10 border-emerald-500/20', label: 'Listo' },
+  INDEXED:     { icon: CheckCircle, color: 'text-emerald-400', bg: 'bg-emerald-500/10 border-emerald-500/20', label: 'Indexado' },
   PROCESSING:  { icon: Clock,       color: 'text-amber-400',   bg: 'bg-amber-500/10 border-amber-500/20',   label: 'Procesando...' },
   FAILED:      { icon: AlertCircle, color: 'text-red-400',     bg: 'bg-red-500/10 border-red-500/20',       label: 'Error' },
 }
@@ -77,7 +79,7 @@ export default function LibraryClient({ initialBooks }: { initialBooks: RuleBook
           description: description.trim() || null,
           file_name: selectedFile!.name,
           file_size: selectedFile!.size,
-          gemini_state: res.state ?? 'PROCESSING',
+          processing_state: res.state ?? 'PROCESSING',
           created_at: new Date().toISOString()
         }, ...prev])
         setShowUpload(false)
@@ -205,8 +207,8 @@ export default function LibraryClient({ initialBooks }: { initialBooks: RuleBook
           </form>
 
           <div className="text-xs text-foreground/30 text-center space-y-1">
-            <p>El PDF se sube a Gemini File API y puede tardar 1-2 minutos en estar listo.</p>
-            <p>Una vez activo, el Oracle y el GM lo usarán como referencia automáticamente.</p>
+            <p>El PDF se sube, se fragmenta y se indexa con embeddings para búsqueda semántica.</p>
+            <p>Una vez indexado, el Oracle y el GM lo usarán como referencia automáticamente.</p>
           </div>
         </div>
       )}
@@ -225,7 +227,7 @@ export default function LibraryClient({ initialBooks }: { initialBooks: RuleBook
       ) : (
         <div className="space-y-3">
           {books.map((book) => {
-            const cfg = STATE_CONFIG[book.gemini_state as keyof typeof STATE_CONFIG] ?? STATE_CONFIG.PROCESSING
+            const cfg = STATE_CONFIG[book.processing_state as keyof typeof STATE_CONFIG] ?? STATE_CONFIG.PROCESSING
             const Icon = cfg.icon
             return (
               <div
@@ -249,7 +251,7 @@ export default function LibraryClient({ initialBooks }: { initialBooks: RuleBook
 
                 {/* State Badge */}
                 <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-medium ${cfg.bg} ${cfg.color} shrink-0`}>
-                  <Icon className={`w-3 h-3 ${book.gemini_state === 'PROCESSING' ? 'animate-spin' : ''}`} />
+                  <Icon className={`w-3 h-3 ${book.processing_state === 'PROCESSING' ? 'animate-spin' : ''}`} />
                   {cfg.label}
                 </div>
 

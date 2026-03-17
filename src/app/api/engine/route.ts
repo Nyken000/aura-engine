@@ -1,8 +1,5 @@
-import { GoogleGenerativeAI } from '@google/generative-ai'
+import { generateAiJson, type AiChatMessage } from '@/lib/ai/provider'
 import { NextResponse } from 'next/server'
-
-const apiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY || ''
-const genAI = new GoogleGenerativeAI(apiKey)
 
 type EnginePreviousMessage = {
   role: 'user' | 'assistant' | 'system'
@@ -31,44 +28,24 @@ type EngineRequestBody = {
   diceResult?: DiceResult | null
 }
 
-export async function POST(req: Request) {
-  try {
-    const {
-      action,
-      character,
-      globalState,
-      previousMessages,
-      diceResult,
-    }: EngineRequestBody = await req.json()
-
-    if (!apiKey) {
-      return NextResponse.json({ error: 'Gemini API key is missing.' }, { status: 500 })
-    }
-
-    const model = genAI.getGenerativeModel({
-      model: 'gemini-1.5-flash',
-      generationConfig: {
-        responseMimeType: 'application/json',
-      },
-    })
-
-    const systemPrompt = `
-You are the Dungeon Master (DM) for "Aura", a dark medieval fantasy RPG. 
+function buildEngineMessages(params: EngineRequestBody): AiChatMessage[] {
+  const systemPrompt = `
+You are the Dungeon Master (DM) for "Aura", a dark medieval fantasy RPG.
 You control the world, NPCs, and narrative consequences based on the player's actions.
 
 CHARACTER STATE:
-Name: ${character.name}
-Stats: ${JSON.stringify(character.stats)}
-Inventory: ${JSON.stringify(character.inventory)}
-Suspicion: ${character.suspicion}/100
-Credibility: ${character.credibility}/100
+Name: ${params.character.name}
+Stats: ${JSON.stringify(params.character.stats)}
+Inventory: ${JSON.stringify(params.character.inventory)}
+Suspicion: ${params.character.suspicion}/100
+Credibility: ${params.character.credibility}/100
 
 WORLD STATE:
-${JSON.stringify(globalState)}
+${JSON.stringify(params.globalState)}
 
 DICE ARBITRATION:
 If the player attempted a difficult/risky action, a dice result may be provided:
-${diceResult ? `DICE RESULT: ${diceResult.total} (Base: ${diceResult.roll} + Modifier: ${diceResult.modifier})` : 'No dice rolled for this action.'}
+${params.diceResult ? `DICE RESULT: ${params.diceResult.total} (Base: ${params.diceResult.roll} + Modifier: ${params.diceResult.modifier})` : 'No dice rolled for this action.'}
 If a dice result is provided, YOU MUST treat it as absolute. A low roll means failure/consequences. A high roll means success.
 
 YOUR TASK:
@@ -90,23 +67,28 @@ You must return a raw JSON object with NO markdown wrapping, following this sche
 }
 `
 
-    const history = previousMessages.map((msg) => ({
-      role: msg.role === 'user' ? 'user' : 'model',
-      parts: [{ text: msg.content }],
-    }))
+  const historyMessages = params.previousMessages.map<AiChatMessage>((message) => ({
+    role: message.role,
+    content: message.content,
+  }))
 
-    history.push({
-      role: 'user',
-      parts: [{ text: `Player Action: ${action}` }],
+  return [
+    { role: 'system', content: systemPrompt },
+    ...historyMessages,
+    { role: 'user', content: `Player Action: ${params.action}` },
+  ]
+}
+
+export async function POST(req: Request) {
+  try {
+    const payload = (await req.json()) as EngineRequestBody
+    const responseText = await generateAiJson({
+      messages: buildEngineMessages(payload),
+      temperature: 0,
+      format: 'json',
     })
 
-    const result = await model.generateContent({
-      contents: [{ role: 'user', parts: [{ text: systemPrompt }] }, ...history],
-    })
-
-    const responseText = result.response.text()
     const jsonResponse = JSON.parse(responseText) as Record<string, unknown>
-
     return NextResponse.json(jsonResponse)
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unknown AI engine error'

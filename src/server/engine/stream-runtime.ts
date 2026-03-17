@@ -1,119 +1,136 @@
-import { getCampaignById } from "@/utils/game/campaigns";
-import {
-    buildDiceResultFeedbackMessage,
-    parseDiceResultMarker,
-    type DiceRollOutcome,
-    type DiceRollRequired,
-} from "@/types/dice";
-import {
-    advanceSessionCombatTurn,
-    applyCharacterHpToSessionCombat,
-    armorClassFromStats,
-    createEmptySessionCombatState,
-    currentCombatToPromptState,
-    endSessionCombat,
-    registerSessionInitiative,
-    resolveTurnPlayerIdFromParticipant,
-    safeArray,
-    startSessionCombat,
-} from "@/server/combat/session-combat-service";
+import { randomUUID } from "node:crypto";
 import type {
-    CharacterStats,
     CombatParticipant,
     CombatState,
-    InventoryItem,
+    JsonValue,
     JsonObject,
     SessionCombatParticipant,
     SessionCombatStateRecord,
     SessionPlayerRow,
 } from "@/server/combat/session-combat";
-import type { SessionCombatTransitionEvent } from "@/server/combat/session-combat-transitions";
-import {
-    normalizeCombatEventResolution,
-    type CombatEventResolution,
-    type CombatParticipantReference,
+import type {
+    CombatEventResolution,
+    CombatParticipantReference,
 } from "@/server/combat/session-combat-events";
+import {
+    advanceSessionCombatTurn,
+    computeCombatRoundTurnLabel,
+    currentCombatToPromptState,
+    resolveTurnPlayerIdFromParticipant,
+    updateSessionCombatStateFromModel,
+} from "@/server/combat/session-combat-service";
+import type { SessionCombatTransitionEvent } from "@/server/combat/session-combat-transitions";
+
+type CharacterInventoryItem = {
+    name?: string;
+    type?: string;
+    [key: string]: JsonValue | undefined;
+};
 
 export type CharacterRecord = {
     id: string;
     user_id: string;
     name: string;
-    campaign_id: string | null;
+    campaign_id?: string | null;
     hp_current: number;
     hp_max: number;
-    inventory: InventoryItem[] | null;
-    stats: CharacterStats | null;
-    worlds?: WorldRecord | null;
-    combat_state?: CombatState | null;
-};
-
-export type WorldRecord = {
-    id: string;
-    name: string;
-    description: string;
-};
-
-export type RuleMatchRecord = {
-    entity_type: string;
-    name: string;
-    content: string;
+    inventory: CharacterInventoryItem[] | null;
+    stats: Record<string, JsonValue>;
+    worlds?: {
+        id: string;
+        name: string;
+        description: string;
+    } | null;
+    combat_state?: JsonValue | null;
 };
 
 export type NarrativeEventRow = {
-    id: string;
-    role: "user" | "assistant" | "system";
-    content: string;
-    created_at: string;
+    id?: string;
     session_id?: string | null;
+    world_id?: string | null;
     character_id?: string | null;
+    role: string;
+    content: string;
+    created_at?: string;
     event_index?: number | null;
     client_event_id?: string | null;
-    payload?: {
-        sender_name?: string;
-        [key: string]: unknown;
-    } | null;
-    characters?: {
-        name?: string;
-    } | null;
+    event_type?: string | null;
+    payload?: JsonObject | null;
 };
 
-export type CombatUpdate = {
-    in_combat: boolean;
-    initiative_requested: boolean;
-    enemies?: CombatParticipant[];
-} | null;
+export type NarrativeEventInsert = {
+    world_id?: string | null;
+    character_id?: string | null;
+    role: string;
+    content: string;
+    session_id?: string | null;
+    client_event_id?: string | null;
+    event_type?: string | null;
+    payload?: JsonObject | null;
+    dice_roll_required?: JsonValue | null;
+};
 
-export type StateChanges = {
-    hp_delta?: number;
-    inventory_added?: string[];
-    inventory_removed?: string[];
-    skills_used?: string[];
-} | null;
+export type RuleMatchRecord = {
+    id: string;
+    title: string;
+    content: string;
+    similarity?: number | null;
+    page_from?: number | null;
+    page_to?: number | null;
+};
 
-export type StreamRequestBody = {
+type StreamRequestBody = {
     characterId?: string;
     content?: string;
     sessionId?: string | null;
     clientEventId?: string | null;
 };
 
-export type MaybeDiceRollRequired = DiceRollRequired | null;
-
-export type NarrativeEventInsert = {
-    world_id: string | null;
-    character_id: string | null;
-    role: "user" | "assistant" | "system";
-    content: string;
-    session_id?: string | null;
-    client_event_id?: string | null;
-    dice_roll_required?: MaybeDiceRollRequired;
-    event_type?: string;
-    payload?: JsonObject;
+type StateChanges = {
+    hp_delta?: number;
+    inventory_added?: string[];
+    inventory_removed?: string[];
 };
+
+type DiceRollRequest = {
+    needed?: boolean;
+    stat?: string | null;
+    skill?: string | null;
+    dc?: number | null;
+    reason?: string | null;
+};
+
+type MaybeDiceRollRequired = DiceRollRequest | null;
+
+type CombatParticipantDraft = {
+    name: string;
+    hp: number;
+    max_hp: number;
+    ac: number;
+    initiative?: number;
+};
+
+type CombatUpdate = {
+    start?: boolean;
+    end?: boolean;
+    participants?: CombatParticipantDraft[];
+    turn_index?: number;
+    round?: number;
+};
+
+type DiceRollOutcome = {
+    stat: string;
+    skill?: string | null;
+    total: number;
+    dc: number;
+    success: boolean;
+    critical: "critical_success" | "critical_failure" | null;
+};
+
 
 export type CharacterUpdatePatch = {
     hp_current?: number;
-    inventory?: InventoryItem[];
+    inventory?: CharacterInventoryItem[];
     combat_state?: CombatState;
 };
 
@@ -141,7 +158,6 @@ export interface EngineStreamRepository {
     getRecentCharacterEvents(characterId: string): Promise<NarrativeEventRow[]>;
     getSessionPlayers(sessionId: string): Promise<SessionPlayerRow[]>;
     getSessionCombatState(sessionId: string): Promise<SessionCombatStateRecord | null>;
-    getActiveRuleBookUris(): Promise<string[]>;
     searchRelevantRules(content: string): Promise<RuleMatchRecord[]>;
     insertNarrativeEvents(rows: NarrativeEventInsert[]): Promise<void>;
     updateCharacter(characterId: string, patch: CharacterUpdatePatch): Promise<void>;
@@ -168,7 +184,6 @@ export interface StreamModelChunk {
 export interface EngineStreamModelGateway {
     generateContentStream(params: {
         prompt: string;
-        ruleBookUris: string[];
     }): Promise<AsyncIterable<StreamModelChunk>>;
 }
 
@@ -192,9 +207,9 @@ function buildDiceResolutionPrompt(result: DiceRollOutcome): string {
 
 function parseModelResponse(fullResponse: string): {
     narrative: string;
-    stateChanges: StateChanges;
+    stateChanges: StateChanges | null;
     diceRollRequired: MaybeDiceRollRequired;
-    combatUpdate: CombatUpdate;
+    combatUpdate: CombatUpdate | null;
     combatEventResolution: CombatEventResolution;
 } {
     const cleaned = fullResponse
@@ -203,9 +218,9 @@ function parseModelResponse(fullResponse: string): {
         .trim();
 
     let narrative = "";
-    let stateChanges: StateChanges = null;
+    let stateChanges: StateChanges | null = null;
     let diceRollRequired: MaybeDiceRollRequired = null;
-    let combatUpdate: CombatUpdate = null;
+    let combatUpdate: CombatUpdate | null = null;
     let combatEventResolution: CombatEventResolution = null;
 
     try {
@@ -238,14 +253,11 @@ function parseModelResponse(fullResponse: string): {
         if (match) {
             narrative = match[1]
                 .replace(/\\n/g, "\n")
-                .replace(/\\t/g, "  ")
                 .replace(/\\"/g, '"')
-                .replace(/\\'/g, "'");
+                .replace(/\\\\/g, "\\");
+        } else {
+            narrative = cleaned;
         }
-    }
-
-    if (!narrative) {
-        narrative = cleaned.replace(/"narrative_response"\s*:\s*/g, "").trim();
     }
 
     return {
@@ -257,109 +269,8 @@ function parseModelResponse(fullResponse: string): {
     };
 }
 
-function isDuplicateClientEventError(error: unknown): boolean {
-    const message = error instanceof Error ? error.message : String(error ?? "");
-    const normalized = message.toLowerCase();
-
-    return (
-        normalized.includes("client_event_id") &&
-        (normalized.includes("duplicate") ||
-            normalized.includes("unique") ||
-            normalized.includes("uq_narrative_events_session_client_event_id"))
-    );
-}
-
-function hasMatchingClientEvent(
-    events: NarrativeEventRow[],
-    clientEventId: string | null,
-): boolean {
-    if (!clientEventId) return false;
-    return events.some((event) => event.client_event_id === clientEventId);
-}
-
-async function persistInboundNarrativeEvent(params: {
-    repository: EngineStreamRepository;
-    character: CharacterRecord;
-    content: string;
-    normalizedSessionId: string | null;
-    normalizedClientEventId: string;
-    parsedDiceResult: DiceRollOutcome | null;
-}): Promise<"inserted" | "duplicate"> {
-    const {
-        repository,
-        character,
-        content,
-        normalizedSessionId,
-        normalizedClientEventId,
-        parsedDiceResult,
-    } = params;
-
-    const row: NarrativeEventInsert = parsedDiceResult
-        ? {
-              world_id: character.worlds?.id ?? null,
-              character_id: character.id,
-              role: "system",
-              content: buildDiceResultFeedbackMessage(parsedDiceResult),
-              session_id: normalizedSessionId,
-              client_event_id: normalizedClientEventId,
-              event_type: "dice_result",
-              payload: {
-                  sender_name: character.name,
-                  channel: "adventure",
-                  dice_result: parsedDiceResult,
-              },
-          }
-        : {
-              world_id: character.worlds?.id ?? null,
-              character_id: character.id,
-              role: "user",
-              content,
-              session_id: normalizedSessionId,
-              client_event_id: normalizedClientEventId,
-              event_type: "player_message",
-              payload: {
-                  sender_name: character.name,
-                  channel: "adventure",
-              },
-          };
-
-    try {
-        await repository.insertNarrativeEvents([row]);
-        return "inserted";
-    } catch (error) {
-        if (normalizedSessionId && isDuplicateClientEventError(error)) {
-            return "duplicate";
-        }
-
-        throw error;
-    }
-}
-
-function buildCombatPromptContext(
-    sessionCombatState: SessionCombatStateRecord | null,
-): string {
-    if (
-        !sessionCombatState ||
-        (sessionCombatState.status !== "initiative" &&
-            sessionCombatState.status !== "active")
-    ) {
-        return "";
-    }
-
-    return `
-=== DOMINIO TÁCTICO COMPARTIDO ===
-Estado: ${sessionCombatState.status}
-Ronda: ${sessionCombatState.round}
-Turno índice: ${sessionCombatState.turn_index}
-Participantes con IDs estables:
-${sessionCombatState.participants
-            .map(
-                (participant) =>
-                    `- id=${participant.id} | nombre=${participant.name} | character_id=${participant.character_id ?? "null"} | HP=${participant.hp}/${participant.max_hp} | AC=${participant.ac} | jugador=${participant.is_player ? "sí" : "no"} | derrotado=${participant.is_defeated ? "sí" : "no"} | condiciones=${safeArray(participant.conditions).map((condition) => condition.name).join(", ") || "ninguna"}`,
-            )
-            .join("\n")}
-===
-`;
+function safeArray<T>(value: T[] | null | undefined): T[] {
+    return Array.isArray(value) ? value : [];
 }
 
 function buildPrompt(params: {
@@ -379,143 +290,508 @@ function buildPrompt(params: {
         relevantRules,
     } = params;
 
-    const world = character.worlds;
-    const campaign = character.campaign_id
-        ? getCampaignById(character.campaign_id)
-        : null;
+    const stats = character.stats || {};
+    const worldName = character.worlds?.name ?? "Mundo desconocido";
+    const worldDescription =
+        character.worlds?.description ?? "Sin descripción disponible";
 
-    const currentCombatState = currentCombatToPromptState(
-        sessionCombatState,
-        character.combat_state,
-    );
-
-    const historyText = recentEvents
-        .slice()
+    const history = [...recentEvents]
         .reverse()
-        .map((evt) => {
-            const sender =
-                evt.role === "assistant"
-                    ? "GAME MASTER"
-                    : String(
-                        evt.payload?.sender_name || evt.characters?.name || character.name,
-                    ).toUpperCase();
-
-            return `[${evt.role.toUpperCase()} - ${sender}]: ${evt.content}`;
-        })
+        .map((event) => `${event.role.toUpperCase()}: ${event.content}`)
         .join("\n");
 
-    const sessionPlayersContext =
+    const playersBlock =
         sessionPlayers.length > 0
-            ? `\n=== SESIÓN MULTIJUGADOR ===\n${sessionPlayers
+            ? sessionPlayers
                 .map((player) => {
-                    const playerCharacter = player.characters;
-                    if (!playerCharacter) {
-                        return `- ${player.profiles?.username ?? "Jugador"} (sin personaje)`;
-                    }
-                    return `- ${player.profiles?.username ?? "Jugador"} como ${playerCharacter.name} (HP: ${playerCharacter.hp_current}/${playerCharacter.hp_max})`;
+                    const char = player.characters;
+                    const username =
+                        player.profiles?.username || player.user_id || "jugador";
+                    return [
+                        `- ${char?.name ?? "Sin nombre"} (@${username})`,
+                        `  HP: ${char?.hp_current ?? "?"}/${char?.hp_max ?? "?"}`,
+                        `  Inventario: ${JSON.stringify(char?.inventory ?? [])}`,
+                        `  Stats: ${JSON.stringify(char?.stats ?? {})}`,
+                    ].join("\n");
                 })
-                .join("\n")}\n===\n`
-            : "";
+                .join("\n")
+            : "Sin otros jugadores en esta escena.";
 
-    const campaignContext = campaign
-        ? `
-=== CAMPAÑA ACTIVA: "${campaign.title}" ===
-Premisa: ${campaign.description}
-OBJETIVO PRINCIPAL DEL JUGADOR: ${campaign.main_quest}
-SECRETO DEL DM (nunca lo reveles directamente, hazlo emerger lentamente): ${campaign.the_twist}
-NPCs Claves: ${campaign.key_npcs.join(" | ")}
-===
-`
-        : "";
-
-    const dndRulesContext =
+    const rulesBlock =
         relevantRules.length > 0
-            ? `\n=== REGLAS OFICIALES RELEVANTES (5e) ===\nAplica estas reglas si son pertinentes a la acción del jugador:\n\n${relevantRules
-                .map(
-                    (rule) =>
-                        `[${rule.entity_type.toUpperCase()}]: ${rule.name}\n${rule.content}`,
-                )
-                .join("\n\n")}\n`
-            : "";
+            ? relevantRules
+                .map((rule, index) => {
+                    const pages =
+                        rule.page_from || rule.page_to
+                            ? ` (páginas ${rule.page_from ?? "?"}-${rule.page_to ?? "?"})`
+                            : "";
+                    const similarity =
+                        typeof rule.similarity === "number"
+                            ? ` | similitud ${rule.similarity.toFixed(3)}`
+                            : "";
 
-    const combatContext = currentCombatState.in_combat
-        ? `
-=== COMBATE EN CURSO ===
-Turno actual de: ${currentCombatState.participants[currentCombatState.turn]?.name ?? "Desconocido"}
-Participantes (orden actual):
-${currentCombatState.participants
-            .map(
-                (participant) =>
-                    `- ${participant.name} (HP: ${participant.hp}/${participant.max_hp}, AC: ${participant.ac}, Init: ${participant.initiative ?? 0})`,
-            )
-            .join("\n")}
-===
-`
-        : "";
+                    return `Regla ${index + 1}: ${rule.title}${pages}${similarity}\n${rule.content}`;
+                })
+                .join("\n\n")
+            : "No hay fragmentos de manual relevantes recuperados.";
 
-    const combatDomainContext = buildCombatPromptContext(sessionCombatState);
+    const combatStateLabel = sessionCombatState
+        ? JSON.stringify(
+            {
+                status: sessionCombatState.status,
+                round: sessionCombatState.round,
+                turn_index: sessionCombatState.turn_index,
+                turn_label: computeCombatRoundTurnLabel(sessionCombatState),
+                participants: sessionCombatState.participants,
+            },
+            null,
+            2,
+        )
+        : JSON.stringify(currentCombatToPromptState(null, character.combat_state as unknown as CombatState), null, 2);
 
     return `
-Eres el Game Master de una aventura de mesa basada en D&D 5E.
-Mundo: "${world?.name || "Mundo Desconocido"}" - ${world?.description || "Tierras misteriosas sin documentar."}
-${campaignContext}
+Eres Aura, una game master de RPG multijugador con narrativa premium, consistente y estructurada.
+Responde SIEMPRE en español.
+Debes devolver un único JSON válido con esta forma exacta:
 
-Personaje:
-- Nombre: ${character.name}
-- Raza: ${character.stats?.race ?? "Desconocida"} | Clase: ${character.stats?.class ?? "Aventurero"}
-- HP: ${character.hp_current}/${character.hp_max}
-- STR ${character.stats?.str ?? 10} DEX ${character.stats?.dex ?? 10} CON ${character.stats?.con ?? 10} INT ${character.stats?.int ?? 10} SAB ${character.stats?.wis ?? 10} CAR ${character.stats?.cha ?? 10}
-- Equipamiento: ${safeArray(character.inventory).map((item) => item.name).join(", ") || "Nada"}
-
-${sessionPlayersContext}
-${combatContext}
-${combatDomainContext}
-
-HISTORIAL RECIENTE:
-${historyText}
-
-${dndRulesContext}
-
-ACCIÓN DEL JUGADOR: "${contentForModel}"
-
-Responde ÚNICAMENTE con un JSON válido (sin markdown), con esta forma exacta:
 {
-  "narrative_response": "Narración épica e inmersiva...",
+  "narrative_response": "texto narrativo para el jugador",
+  "state_changes": {
+    "hp_delta": 0,
+    "inventory_added": [],
+    "inventory_removed": []
+  },
   "dice_roll_required": {
     "needed": false,
-    "die": "d20",
-    "stat": "dex",
-    "skill": "Sigilo",
-    "dc": 15,
-    "flavor": "Tirada de Sigilo (DES) — CD 15"
+    "stat": null,
+    "skill": null,
+    "dc": null,
+    "reason": null
   },
-  "state_changes": { "hp_delta": 0, "inventory_added": [], "inventory_removed": [], "skills_used": [] },
   "combat": {
-    "in_combat": false,
-    "initiative_requested": false,
-    "enemies": [
-      { "name": "Goblin 1", "hp": 7, "max_hp": 7, "ac": 12, "initiative": 0, "is_player": false }
-    ]
+    "start": false,
+    "end": false,
+    "participants": [],
+    "turn_index": 0,
+    "round": 1
   },
   "combat_events": {
-    "attack_declared": null,
     "damage_applied": null,
     "healing_applied": null,
     "condition_applied": null,
+    "condition_removed": null,
     "combat_ended": null
   }
 }
 
-IMPORTANTE:
-1. Si la acción requiere tirada, pon "needed": true en dice_roll_required.
-2. Si decides iniciar combate, pon "initiative_requested": true e "in_combat": true y rellena "enemies".
-3. Si no quieres cambiar inventario o HP, devuelve arrays vacíos y hp_delta 0.
-4. El campo "flavor" debe ser corto.
-5. Si el combate compartido ya está activo o en iniciativa, rellena "combat_events" cuando ocurra una acción táctica real.
-6. Usa los participant_id y character_id del bloque DOMINIO TÁCTICO COMPARTIDO cuando existan; no inventes IDs.
-7. Usa condition_applied sólo cuando una condición real quede aplicada al objetivo.
-8. Usa combat_ended sólo cuando el encounter termine de verdad.
-`;
+Reglas importantes:
+- No escribas texto fuera del JSON.
+- Si no corresponde un bloque, mantenlo como null o con valores vacíos válidos.
+- Si el jugador ya tiró dados y el resultado está indicado en el prompt, no pidas otra tirada para esa misma acción.
+- Si hay combate multijugador activo, respeta el estado compartido.
+- Solo avanza turno mediante consecuencia narrativa apropiada; el evento explícito lo persiste el backend.
+- Si una regla del manual es relevante, priorízala.
+- No inventes páginas ni cites reglas inexistentes.
+- Mantén consistencia con el historial reciente.
+
+MUNDO
+Nombre: ${worldName}
+Descripción: ${worldDescription}
+
+PERSONAJE ACTIVO
+Nombre: ${character.name}
+HP: ${character.hp_current}/${character.hp_max}
+Inventario: ${JSON.stringify(character.inventory ?? [])}
+Stats: ${JSON.stringify(stats, null, 2)}
+
+JUGADORES EN SESIÓN
+${playersBlock}
+
+ESTADO DE COMBATE
+${combatStateLabel}
+
+REGLAS RECUPERADAS DESDE MANUALES
+${rulesBlock}
+
+HISTORIAL RECIENTE
+${history || "Sin historial reciente."}
+
+MENSAJE DEL JUGADOR
+${contentForModel}
+`.trim();
+}
+
+function parseDiceResultMarker(content: string): DiceRollOutcome | null {
+    const match = content.match(/\[DICE_RESULT:\s*([^\]]+)\]/i);
+    if (!match) return null;
+
+    try {
+        const payload = JSON.parse(match[1]) as Partial<DiceRollOutcome>;
+
+        if (
+            typeof payload.stat !== "string" ||
+            typeof payload.total !== "number" ||
+            typeof payload.dc !== "number" ||
+            typeof payload.success !== "boolean"
+        ) {
+            return null;
+        }
+
+        return {
+            stat: payload.stat,
+            skill:
+                typeof payload.skill === "string" && payload.skill.trim().length > 0
+                    ? payload.skill
+                    : null,
+            total: payload.total,
+            dc: payload.dc,
+            success: payload.success,
+            critical:
+                payload.critical === "critical_success" ||
+                    payload.critical === "critical_failure"
+                    ? payload.critical
+                    : null,
+        };
+    } catch {
+        return null;
+    }
+}
+
+function toParticipantReference(value: unknown): CombatParticipantReference | null {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+        return null;
+    }
+
+    const candidate = value as Record<string, unknown>;
+    const participantId =
+        typeof candidate.participant_id === "string"
+            ? candidate.participant_id
+            : typeof candidate.id === "string"
+                ? candidate.id
+                : null;
+    const characterId =
+        typeof candidate.character_id === "string" ? candidate.character_id : null;
+    const userId = typeof candidate.user_id === "string" ? candidate.user_id : null;
+    const name = typeof candidate.name === "string" ? candidate.name : null;
+
+    if (!participantId && !characterId && !userId && !name) {
+        return null;
+    }
+
+    return {
+        participant_id: participantId,
+        character_id: characterId,
+        user_id: userId,
+        name,
+    };
+}
+
+function normalizeCombatEventResolution(value: unknown): CombatEventResolution {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+        return null;
+    }
+
+    const record = value as Record<string, unknown>;
+
+    const damage_applied =
+        record.damage_applied &&
+            typeof record.damage_applied === "object" &&
+            !Array.isArray(record.damage_applied)
+            ? (() => {
+                const raw = record.damage_applied as Record<string, unknown>;
+                const target = toParticipantReference(raw.target);
+
+                if (!target || typeof raw.amount !== "number") {
+                    return null;
+                }
+
+                return {
+                    actor: toParticipantReference(raw.actor),
+                    target,
+                    amount: raw.amount,
+                    damage_type:
+                        typeof raw.damage_type === "string"
+                            ? raw.damage_type
+                            : null,
+                    summary:
+                        typeof raw.summary === "string" ? raw.summary : null,
+                };
+            })()
+            : null;
+
+    const healing_applied =
+        record.healing_applied &&
+            typeof record.healing_applied === "object" &&
+            !Array.isArray(record.healing_applied)
+            ? (() => {
+                const raw = record.healing_applied as Record<string, unknown>;
+                const target = toParticipantReference(raw.target);
+
+                if (!target || typeof raw.amount !== "number") {
+                    return null;
+                }
+
+                return {
+                    actor: toParticipantReference(raw.actor),
+                    target,
+                    amount: raw.amount,
+                    summary:
+                        typeof raw.summary === "string" ? raw.summary : null,
+                };
+            })()
+            : null;
+
+    const condition_applied =
+        record.condition_applied &&
+            typeof record.condition_applied === "object" &&
+            !Array.isArray(record.condition_applied)
+            ? (() => {
+                const raw = record.condition_applied as Record<string, unknown>;
+                const target = toParticipantReference(raw.target);
+
+                if (
+                    !target ||
+                    typeof raw.condition_name !== "string" ||
+                    raw.condition_name.trim().length === 0
+                ) {
+                    return null;
+                }
+
+                return {
+                    actor: toParticipantReference(raw.actor),
+                    target,
+                    condition_name: raw.condition_name,
+                    duration_rounds:
+                        typeof raw.duration_rounds === "number"
+                            ? raw.duration_rounds
+                            : null,
+                    source:
+                        typeof raw.source === "string" ? raw.source : null,
+                    summary:
+                        typeof raw.summary === "string" ? raw.summary : null,
+                };
+            })()
+            : null;
+
+    const condition_removed =
+        record.condition_removed &&
+            typeof record.condition_removed === "object" &&
+            !Array.isArray(record.condition_removed)
+            ? (() => {
+                const raw = record.condition_removed as Record<string, unknown>;
+                const target = toParticipantReference(raw.target);
+
+                if (
+                    !target ||
+                    typeof raw.condition_name !== "string" ||
+                    raw.condition_name.trim().length === 0
+                ) {
+                    return null;
+                }
+
+                return {
+                    actor: toParticipantReference(raw.actor),
+                    target,
+                    condition_name: raw.condition_name,
+                    summary:
+                        typeof raw.summary === "string" ? raw.summary : null,
+                };
+            })()
+            : null;
+
+    const combat_ended =
+        record.combat_ended &&
+            typeof record.combat_ended === "object" &&
+            !Array.isArray(record.combat_ended)
+            ? (() => {
+                const raw = record.combat_ended as Record<string, unknown>;
+                const winner_side = (
+                    raw.winner_side === "players" ||
+                    raw.winner_side === "enemies" ||
+                    raw.winner_side === "none" ||
+                    raw.winner_side === "unknown"
+                ) ? (raw.winner_side as "players" | "enemies" | "none" | "unknown") : null;
+
+                return {
+                    winner_side,
+                    reason:
+                        typeof raw.reason === "string" ? raw.reason : null,
+                    summary:
+                        typeof raw.summary === "string" ? raw.summary : null,
+                };
+            })()
+            : null;
+
+    if (
+        !damage_applied &&
+        !healing_applied &&
+        !condition_applied &&
+        !condition_removed &&
+        !combat_ended
+    ) {
+        return null;
+    }
+
+    return {
+        damage_applied,
+        healing_applied,
+        condition_applied,
+        condition_removed,
+        combat_ended,
+    };
+}
+
+function normalizeDiceRollRequired(value: MaybeDiceRollRequired): JsonObject | null {
+    if (!value || !value.needed) return null;
+
+    return {
+        needed: true,
+        stat: value.stat ?? null,
+        skill: value.skill ?? null,
+        dc: typeof value.dc === "number" ? value.dc : null,
+        reason: value.reason ?? null,
+    };
+}
+
+function hasMatchingClientEvent(
+    events: NarrativeEventRow[],
+    clientEventId: string | null,
+): boolean {
+    if (!clientEventId) return false;
+    return events.some((event) => event.client_event_id === clientEventId);
+}
+
+function isDuplicateError(error: unknown): boolean {
+    if (!(error instanceof Error)) return false;
+    const message = error.message.toLowerCase();
+    return (
+        message.includes("duplicate key") ||
+        message.includes("unique constraint") ||
+        message.includes("uq_narrative_events_session_client_event_id")
+    );
+}
+
+async function persistInboundNarrativeEvent(params: {
+    repository: EngineStreamRepository;
+    character: CharacterRecord;
+    content: string;
+    normalizedSessionId: string | null;
+    normalizedClientEventId: string;
+    parsedDiceResult: DiceRollOutcome | null;
+}): Promise<"ok" | "duplicate"> {
+    const {
+        repository,
+        character,
+        content,
+        normalizedSessionId,
+        normalizedClientEventId,
+        parsedDiceResult,
+    } = params;
+
+    try {
+        await repository.insertNarrativeEvents([
+            {
+                world_id: character.worlds?.id ?? null,
+                character_id: character.id,
+                role: "user",
+                content,
+                session_id: normalizedSessionId,
+                client_event_id: normalizedClientEventId,
+                event_type: "player_message",
+                payload: parsedDiceResult
+                    ? ({
+                        dice_result: parsedDiceResult,
+                    } as JsonObject)
+                    : null,
+                dice_roll_required: null,
+            },
+        ]);
+        return "ok";
+    } catch (error) {
+        if (isDuplicateError(error)) {
+            return "duplicate";
+        }
+        throw error;
+    }
+}
+
+function buildUpdatedCharacterCombatState(params: {
+    character: CharacterRecord;
+    combatUpdate: CombatUpdate;
+    currentCombatState: CombatState;
+}): CombatState {
+    const { combatUpdate, currentCombatState } = params;
+
+    if (combatUpdate.start) {
+        return {
+            in_combat: true,
+            turn: typeof combatUpdate.turn_index === "number" ? combatUpdate.turn_index : 0,
+            round: typeof combatUpdate.round === "number" ? combatUpdate.round : 1,
+            participants: safeArray(combatUpdate.participants).map((participant) => ({
+                name: participant.name,
+                hp: participant.hp,
+                max_hp: participant.max_hp,
+                ac: participant.ac,
+                initiative: participant.initiative ?? 0,
+                is_player: false,
+                is_defeated: participant.hp <= 0,
+            })),
+        };
+    }
+
+    if (combatUpdate.end) {
+        return {
+            in_combat: false,
+            turn: 0,
+            round: 1,
+            participants: [],
+        };
+    }
+
+    return {
+        ...currentCombatState,
+        turn:
+            typeof combatUpdate.turn_index === "number"
+                ? combatUpdate.turn_index
+                : currentCombatState.turn,
+        round:
+            typeof combatUpdate.round === "number"
+                ? combatUpdate.round
+                : currentCombatState.round,
+        participants:
+            safeArray(combatUpdate.participants).length > 0
+                ? safeArray(combatUpdate.participants).map((participant) => ({
+                    name: participant.name,
+                    hp: participant.hp,
+                    max_hp: participant.max_hp,
+                    ac: participant.ac,
+                    initiative: participant.initiative ?? 0,
+                    is_player: false,
+                    is_defeated: participant.hp <= 0,
+                }))
+                : currentCombatState.participants,
+    };
+}
+
+function toStreamDoneChunk(payload?: JsonObject | null): Uint8Array {
+    const encoder = new TextEncoder();
+    return encoder.encode(`data: ${JSON.stringify({ done: true, ...(payload ?? {}) })}\n\n`);
+}
+
+export async function readStreamResponse(response: Response): Promise<string> {
+    if (!response.body) return "";
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let output = "";
+
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        output += decoder.decode(value, { stream: true });
+    }
+
+    output += decoder.decode();
+    return output;
 }
 
 async function readSseText(response: Response): Promise<string> {
@@ -547,15 +823,14 @@ export async function processEngineStream(params: {
     }
 
     const normalizedSessionId = sessionId ?? null;
-    const normalizedClientEventId = clientEventId ?? crypto.randomUUID();
+    const normalizedClientEventId = clientEventId ?? randomUUID();
     const parsedDiceResult = parseDiceResultMarker(content);
     const contentForModel = parsedDiceResult
         ? buildDiceResolutionPrompt(parsedDiceResult)
         : content;
 
-    const [ruleBookUris, recentEvents, sessionPlayers, sessionCombatState, relevantRules] =
+    const [recentEvents, sessionPlayers, sessionCombatState, relevantRules] =
         await Promise.all([
-            repository.getActiveRuleBookUris(),
             normalizedSessionId
                 ? repository.getRecentSessionEvents(normalizedSessionId)
                 : repository.getRecentCharacterEvents(character.id),
@@ -570,7 +845,7 @@ export async function processEngineStream(params: {
 
     const currentCombatState = currentCombatToPromptState(
         sessionCombatState,
-        character.combat_state,
+        character.combat_state as CombatState | null,
     );
 
     if (normalizedSessionId && hasMatchingClientEvent(recentEvents, normalizedClientEventId)) {
@@ -612,7 +887,7 @@ export async function processEngineStream(params: {
 
         const newCombatState: CombatState = {
             ...currentCombatState,
-            participants: currentCombatState.participants.map((participant) => ({
+            participants: currentCombatState.participants.map((participant: CombatParticipant) => ({
                 ...participant,
             })),
         };
@@ -698,14 +973,13 @@ export async function processEngineStream(params: {
 
     const encoder = new TextEncoder();
     let fullResponse = "";
-    const assistantClientEventId = crypto.randomUUID();
+    const assistantClientEventId = randomUUID();
 
     const stream = new ReadableStream({
         async start(controller) {
             try {
                 const result = await modelGateway.generateContentStream({
                     prompt,
-                    ruleBookUris,
                 });
 
                 for await (const chunk of result) {
@@ -757,221 +1031,93 @@ export async function processEngineStream(params: {
                         content: narrative,
                         session_id: normalizedSessionId,
                         client_event_id: assistantClientEventId,
-                        dice_roll_required: diceRollRequired,
-                        event_type: parsedDiceResult
-                            ? "gm_reaction"
-                            : combatUpdate?.initiative_requested
-                                ? "combat_started"
-                                : "gm_message",
-                        payload: {
-                            sender_name: "Game Master",
-                            channel: "adventure",
-                            state_changes: toJsonObject(stateChanges),
-                            combat: toJsonObject(combatUpdate),
-                            combat_events: toJsonObject(combatEventResolution),
-                            ...(parsedDiceResult
-                                ? {
-                                    source: "dice_result" as const,
-                                    dice_result: parsedDiceResult,
-                                }
-                                : {}),
-                        },
+                        event_type: "gm_message",
+                        payload: null,
+                        dice_roll_required: normalizeDiceRollRequired(diceRollRequired),
                     },
                 ]);
 
-                if (diceRollRequired?.needed) {
-                    await repository.insertNarrativeEvents([
-                        {
-                            world_id: character.worlds?.id ?? null,
+                if (normalizedSessionId && sessionCombatState && combatEventResolution) {
+                    const persistResult = await repository.persistCombatEvents({
+                        worldId: character.worlds?.id ?? null,
+                        characterId: character.id,
+                        sessionId: normalizedSessionId,
+                        resolution: combatEventResolution,
+                        currentState: sessionCombatState,
+                        actingParticipant: {
+                            user_id: userId ?? null,
                             character_id: character.id,
-                            role: "system",
-                            content: `[SISTEMA_DADO_PEDIDO] ${diceRollRequired.flavor}`,
-                            session_id: normalizedSessionId,
-                            event_type: "dice_requested",
-                            payload: {
-                                sender_name: "Sistema",
-                                channel: "adventure",
-                                dice_request: diceRollRequired,
-                            },
-                            dice_roll_required: diceRollRequired,
+                            name: character.name,
                         },
-                    ]);
-                }
+                    });
 
-                if (normalizedSessionId) {
-                    const currentSessionState =
-                        sessionCombatState ??
-                        createEmptySessionCombatState(normalizedSessionId);
-
-                    let nextSessionState = currentSessionState;
-                    let shouldPersistParticipantsSnapshot = false;
-
-                    if (combatUpdate && combatUpdate.in_combat) {
-                        const startedCombat = startSessionCombat({
-                            sessionId: normalizedSessionId,
-                            currentState: currentSessionState,
-                            sessionPlayers,
-                            enemies: combatUpdate.enemies,
-                            actingCharacterId: character.id,
-                            actingCharacterHp: newHp,
-                            actingCharacterMaxHp: character.hp_max,
+                    for (const touched of persistResult.touchedCharacterHp) {
+                        await repository.updateCharacter(touched.characterId, {
+                            hp_current: touched.hp,
                         });
-
-                        nextSessionState = startedCombat.combatState;
-
-                        await repository.persistCombatTransition({
-                            sessionId: normalizedSessionId,
-                            combatState: startedCombat.combatState,
-                            turnPlayerId: startedCombat.turnPlayerId,
-                        });
-                    } else if (combatUpdate && !combatUpdate.in_combat) {
-                        nextSessionState =
-                            createEmptySessionCombatState(normalizedSessionId);
-                        await repository.upsertSessionCombatState(nextSessionState);
-                    } else if (
-                        currentSessionState.status === "initiative" ||
-                        currentSessionState.status === "active"
-                    ) {
-                        nextSessionState = applyCharacterHpToSessionCombat({
-                            currentState: currentSessionState,
-                            characterId: character.id,
-                            hp: newHp,
-                            maxHp: character.hp_max,
-                        });
-                        shouldPersistParticipantsSnapshot = true;
                     }
 
                     if (
-                        combatEventResolution &&
-                        (nextSessionState.status === "initiative" ||
-                            nextSessionState.status === "active")
-                    ) {
-                        const tacticalResult = await repository.persistCombatEvents({
-                            worldId: character.worlds?.id ?? null,
-                            characterId: character.id,
-                            sessionId: normalizedSessionId,
-                            resolution: combatEventResolution,
-                            currentState: nextSessionState,
-                            actingParticipant: {
-                                character_id: character.id,
-                                name: character.name,
-                            },
-                        });
-
-                        nextSessionState = tacticalResult.combatState;
-                        shouldPersistParticipantsSnapshot = true;
-
-                        for (const entry of tacticalResult.touchedCharacterHp) {
-                            if (entry.characterId === character.id) {
-                                newHp = entry.hp;
-                            }
-
-                            await repository.updateCharacter(entry.characterId, {
-                                hp_current: entry.hp,
-                            });
-                        }
-
-                        if (tacticalResult.combatEnded) {
-                            const endedState = endSessionCombat(nextSessionState);
-                            nextSessionState = endedState;
-                            shouldPersistParticipantsSnapshot = false;
-
-                            await repository.persistCombatTransition({
-                                sessionId: normalizedSessionId,
-                                combatState: endedState,
-                                turnPlayerId: null,
-                            });
-                        }
-                    }
-
-                    if (
-                        shouldPersistParticipantsSnapshot &&
-                        (nextSessionState.status === "initiative" ||
-                            nextSessionState.status === "active")
+                        persistResult.combatState &&
+                        persistResult.combatState.participants.length > 0
                     ) {
                         await repository.updateSessionCombatParticipants(
                             normalizedSessionId,
-                            nextSessionState.participants,
+                            persistResult.combatState.participants,
                         );
                     }
 
-                    await repository.updateCharacter(character.id, {
-                        hp_current: newHp,
-                        inventory,
-                    });
-                } else {
-                    let newCombatState: CombatState = currentCombatState;
-
-                    if (combatUpdate && combatUpdate.in_combat) {
-                        newCombatState = {
-                            ...newCombatState,
-                            in_combat: true,
-                            participants: safeArray(newCombatState.participants).map(
-                                (participant) => ({ ...participant }),
-                            ),
-                        };
-
-                        const existingNames = new Set(
-                            newCombatState.participants.map(
-                                (participant) => participant.name,
-                            ),
+                    if (persistResult.combatEnded) {
+                        controller.enqueue(
+                            toStreamDoneChunk({
+                                combat_ended: true,
+                            }),
                         );
-
-                        if (newCombatState.participants.length === 0) {
-                            newCombatState.participants.push({
-                                name: character.name,
-                                hp: newHp,
-                                max_hp: character.hp_max,
-                                ac: armorClassFromStats(character.stats),
-                                is_player: true,
-                                initiative: 0,
-                            });
-                        }
-
-                        safeArray(combatUpdate.enemies).forEach((enemy) => {
-                            if (!existingNames.has(enemy.name)) {
-                                newCombatState.participants.push({
-                                    ...enemy,
-                                    is_player: false,
-                                });
-                            }
-                        });
-                    } else if (combatUpdate && !combatUpdate.in_combat) {
-                        newCombatState = { in_combat: false, turn: 0, participants: [] };
-                    } else if (newCombatState.in_combat) {
-                        const playerIdx = newCombatState.participants.findIndex(
-                            (participant) => participant.is_player,
-                        );
-                        if (playerIdx > -1) {
-                            newCombatState.participants[playerIdx].hp = newHp;
-                        }
+                        controller.close();
+                        return;
                     }
-
-                    await repository.updateCharacter(character.id, {
-                        hp_current: newHp,
-                        inventory,
-                        combat_state: newCombatState,
-                    });
                 }
 
+                if (!normalizedSessionId) {
+                    if (typeof newHp === "number" || inventory.length !== safeArray(character.inventory).length) {
+                        await repository.updateCharacter(character.id, {
+                            hp_current: newHp,
+                            inventory,
+                        });
+                    }
+
+                    if (combatUpdate) {
+                        const nextState = buildUpdatedCharacterCombatState({
+                            character,
+                            combatUpdate,
+                            currentCombatState,
+                        });
+
+                        await repository.updateCharacter(character.id, {
+                            combat_state: nextState,
+                        });
+                    }
+                } else if (sessionCombatState && combatUpdate) {
+                    const nextState = updateSessionCombatStateFromModel({
+                        currentState: sessionCombatState,
+                        update: combatUpdate,
+                        sessionPlayers,
+                    });
+
+                    await repository.upsertSessionCombatState(nextState);
+                }
+
+                controller.enqueue(toStreamDoneChunk());
+                controller.close();
+            } catch (error) {
+                const errorMessage =
+                    error instanceof Error ? error.message : "Error desconocido";
                 controller.enqueue(
                     encoder.encode(
                         `data: ${JSON.stringify({
-                            done: true,
-                            narrative,
-                            dice_roll_required: diceRollRequired,
-                            assistant_client_event_id: assistantClientEventId,
+                            error: errorMessage,
                         })}\n\n`,
                     ),
-                );
-
-                controller.close();
-            } catch (error: unknown) {
-                const message =
-                    error instanceof Error ? error.message : "Unknown stream error";
-
-                controller.enqueue(
-                    encoder.encode(`data: ${JSON.stringify({ error: message })}\n\n`),
                 );
                 controller.close();
             }
@@ -980,13 +1126,83 @@ export async function processEngineStream(params: {
 
     return new Response(stream, {
         headers: {
-            "Content-Type": "text/event-stream",
+            "Content-Type": "text/event-stream; charset=utf-8",
             "Cache-Control": "no-cache, no-transform",
             Connection: "keep-alive",
         },
     });
 }
 
-export async function readStreamResponse(response: Response): Promise<string> {
-    return readSseText(response);
+export function registerSessionInitiative(params: {
+    currentState: SessionCombatStateRecord;
+    userId: string;
+    rolledInitiative: number;
+}): {
+    combatState: SessionCombatStateRecord;
+    turnPlayerId: string | null;
+} {
+    const { currentState, userId, rolledInitiative } = params;
+
+    const participants = currentState.participants.map((participant) => ({
+        ...participant,
+        conditions: Array.isArray(participant.conditions)
+            ? participant.conditions.map((condition) => ({ ...condition }))
+            : [],
+    }));
+
+    const index = participants.findIndex((participant) => participant.user_id === userId);
+
+    if (index === -1) {
+        return {
+            combatState: currentState,
+            turnPlayerId: null,
+        };
+    }
+
+    participants[index].initiative = rolledInitiative;
+
+    participants.forEach((participant) => {
+        if (
+            !participant.is_player &&
+            (!participant.initiative || participant.initiative === 0)
+        ) {
+            participant.initiative =
+                Math.floor(Math.random() * 20) +
+                1 +
+                Math.floor((participant.ac - 10) / 2);
+        }
+    });
+
+    const allPlayersRolled = participants
+        .filter((participant) => participant.is_player)
+        .every((participant) => typeof participant.initiative === "number");
+
+    if (!allPlayersRolled) {
+        return {
+            combatState: {
+                ...currentState,
+                participants,
+            },
+            turnPlayerId: null,
+        };
+    }
+
+    const orderedParticipants = participants.sort(
+        (left, right) => (right.initiative ?? 0) - (left.initiative ?? 0),
+    );
+
+    const combatState: SessionCombatStateRecord = {
+        ...currentState,
+        status: "active",
+        round: currentState.round > 0 ? currentState.round : 1,
+        turn_index: 0,
+        participants: orderedParticipants,
+    };
+
+    const activeParticipant = orderedParticipants[0];
+
+    return {
+        combatState,
+        turnPlayerId: resolveTurnPlayerIdFromParticipant(activeParticipant),
+    };
 }

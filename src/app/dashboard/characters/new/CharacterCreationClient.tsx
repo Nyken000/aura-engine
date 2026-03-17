@@ -934,12 +934,26 @@ export default function CharacterCreationClient({
                           <div>
                             <h4 className="font-bold text-emerald-400 text-xs mb-2 uppercase tracking-wider">Rasgos Raciales</h4>
                             <ul className="space-y-1.5">
-                              {oracleResult.racial_traits.map((trait: string, i: number) => (
-                                <li key={i} className="text-xs text-foreground/60 flex items-start gap-1.5">
-                                  <span className="text-emerald-500/50 mt-0.5">✦</span>
-                                  <span className="leading-snug">{trait}</span>
-                                </li>
-                              ))}
+                              {oracleResult.racial_traits.map((trait: string, i: number) => {
+                                const [name, ...descParts] = trait.split(':')
+                                const desc = descParts.join(':').trim()
+
+                                return (
+                                  <li key={i} className="text-xs text-foreground/60 flex items-start gap-1.5">
+                                    <span className="text-emerald-500/50 mt-0.5">✦</span>
+                                    <span className="leading-snug">
+                                      {desc ? (
+                                        <>
+                                          <span className="font-bold text-emerald-300">{name}: </span>
+                                          <span>{desc}</span>
+                                        </>
+                                      ) : (
+                                        trait
+                                      )}
+                                    </span>
+                                  </li>
+                                )
+                              })}
                             </ul>
                           </div>
                         )}

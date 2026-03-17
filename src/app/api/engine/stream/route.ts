@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { GoogleGenerativeAI } from "@google/generative-ai";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { streamAiText } from "@/lib/ai/provider";
 import { createClient } from "@/utils/supabase/server";
+import { searchRelevantRuleBookChunks } from "@/server/rag/rule-book-indexer";
 import {
   processEngineStream,
   type CharacterRecord,
@@ -19,31 +20,25 @@ import type {
 import { persistSessionCombatTransition } from "@/server/combat/session-combat-transitions";
 import { persistSessionCombatEvents } from "@/server/combat/session-combat-events";
 
-const genAI = new GoogleGenerativeAI(process.env.NEXT_PUBLIC_GEMINI_API_KEY!);
-
-type RuleBookRecord = {
-  gemini_file_uri: string | null;
-};
-
 type CharacterRow = CharacterRecord;
 
-function createGeminiModelGateway(): EngineStreamModelGateway {
+function createOllamaModelGateway(): EngineStreamModelGateway {
   return {
-    async generateContentStream({ prompt, ruleBookUris }) {
-      const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+    async generateContentStream({ prompt }) {
+      async function* stream() {
+        for await (const chunk of streamAiText({
+          prompt,
+          temperature: 0.2,
+        })) {
+          yield {
+            text() {
+              return chunk;
+            },
+          };
+        }
+      }
 
-      const ruleBookParts = ruleBookUris.map((fileUri) => ({
-        fileData: {
-          mimeType: "application/pdf",
-          fileUri,
-        },
-      }));
-
-      const result = await model.generateContentStream({
-        contents: [{ role: "user", parts: [...ruleBookParts, { text: prompt }] }],
-      });
-
-      return result.stream;
+      return stream();
     },
   };
 }
@@ -110,34 +105,18 @@ function createSupabaseEngineStreamRepository(
       return (data as SessionCombatStateRecord | null) ?? null;
     },
 
-    async getActiveRuleBookUris() {
-      const { data } = await supabase
-        .from("rule_books")
-        .select("gemini_file_uri")
-        .eq("gemini_state", "ACTIVE");
-
-      return ((data as RuleBookRecord[] | null) ?? [])
-        .map((record) => record.gemini_file_uri)
-        .filter((value): value is string => Boolean(value));
-    },
-
     async searchRelevantRules(content) {
       try {
-        const embedRes = await genAI
-          .getGenerativeModel({ model: "gemini-embedding-001" })
-          .embedContent(content);
-
-        const embedding = embedRes.embedding?.values;
-        if (!embedding) return [];
-
-        const { data } = await supabase.rpc("match_dnd_knowledge", {
-          query_embedding: embedding,
-          match_threshold: 0.5,
-          match_count: 3,
+        const matches = await searchRelevantRuleBookChunks({
+          supabase,
+          query: content,
+          limit: 3,
+          minSimilarity: 0.18,
         });
 
-        return (data as RuleMatchRecord[] | null) ?? [];
-      } catch {
+        return matches as RuleMatchRecord[];
+      } catch (error) {
+        console.error("Rule book retrieval error:", error);
         return [];
       }
     },
@@ -232,7 +211,7 @@ export async function POST(req: NextRequest) {
     repository: createSupabaseEngineStreamRepository(
       supabase as unknown as SupabaseClient,
     ),
-    modelGateway: createGeminiModelGateway(),
+    modelGateway: createOllamaModelGateway(),
     userId: user.id,
     body,
   });

@@ -306,7 +306,7 @@ export default async function CharacterSheetPage({ params }: { params: { id: str
                               <span className="text-[10px] mt-0.5">•</span>
                               <div>
                                 {desc ? (
-                                  <><span className="text-amber-300 font-bold">{name}: </span><span className="text-foreground/80 font-normal">{desc}</span></>
+                                  <><span className="text-emerald-300 font-bold">{name}: </span><span className="text-foreground/80 font-normal">{desc}</span></>
                                 ) : (
                                   <span className="text-foreground/80 font-normal">{trait}</span>
                                 )}

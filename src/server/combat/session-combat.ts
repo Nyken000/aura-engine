@@ -29,10 +29,12 @@ export type CombatParticipant = {
   ac: number
   initiative?: number | null
   is_player?: boolean
+  is_defeated?: boolean
 }
 
 export type CombatState = {
   in_combat: boolean
+  round: number
   turn: number
   participants: CombatParticipant[]
 }
