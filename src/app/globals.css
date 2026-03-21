@@ -15,32 +15,34 @@
 /* --- CSS Custom Properties --- */
 :root {
   /* Core Colors */
-  --color-bg:        #0a0908;
-  --color-surface:   #131110;
+  --color-bg: #0a0908;
+  --color-surface: #131110;
   --color-surface-2: #1c1917;
-  --color-border:    rgba(202, 138, 4, 0.12);
-  --color-text:      #c9bfa8;
-  --color-text-muted:#7c7264;
+  --color-border: rgba(202, 138, 4, 0.12);
+  --color-text: #c9bfa8;
+  --color-text-muted: #7c7264;
 
   /* Accent Colors */
-  --color-torch:     #ca8a04;
-  --color-torch-glow:rgba(202, 138, 4, 0.25);
-  --color-blood:     #8a0303;
-  --color-blood-glow:rgba(138, 3, 3, 0.25);
-  --color-magic:     #6d28d9;
+  --color-torch: #ca8a04;
+  --color-torch-glow: rgba(202, 138, 4, 0.25);
+  --color-blood: #8a0303;
+  --color-blood-glow: rgba(138, 3, 3, 0.25);
+  --color-magic: #6d28d9;
   --color-parchment: #e8dcc4;
 
   /* Shadows */
-  --shadow-card:     0 4px 24px rgba(0,0,0,0.6), 0 1px 0 rgba(255,255,255,0.03);
-  --shadow-torch:    0 0 24px -6px rgba(202,138,4,0.5);
-  --shadow-blood:    0 0 24px -6px rgba(138,3,3,0.5);
+  --shadow-card: 0 4px 24px rgba(0, 0, 0, 0.6), 0 1px 0 rgba(255, 255, 255, 0.03);
+  --shadow-torch: 0 0 24px -6px rgba(202, 138, 4, 0.5);
+  --shadow-blood: 0 0 24px -6px rgba(138, 3, 3, 0.5);
 
   /* Transitions */
   --ease-smooth: cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 /* --- Base Reset --- */
-*, *::before, *::after {
+*,
+*::before,
+*::after {
   box-sizing: border-box;
 }
 
@@ -49,11 +51,11 @@ html {
 }
 
 body {
-  color:            var(--color-text);
+  color: var(--color-text);
   background-color: var(--color-bg);
   background-image:
-    radial-gradient(ellipse at top,    rgba(202,138,4,0.06) 0%, transparent 55%),
-    radial-gradient(ellipse at bottom, rgba(138,3,3,0.07)   0%, transparent 55%);
+    radial-gradient(ellipse at top, rgba(202, 138, 4, 0.06) 0%, transparent 55%),
+    radial-gradient(ellipse at bottom, rgba(138, 3, 3, 0.07) 0%, transparent 55%);
   background-attachment: fixed;
   font-family: 'Inter', ui-sans-serif, system-ui;
   min-height: 100vh;
@@ -73,31 +75,41 @@ body {
 
 /* GM / AI narrative text — rendered like a manuscript */
 .gm-text {
-  font-family:   'IM Fell English', ui-serif, Georgia;
-  font-size:     1.125rem;
-  line-height:   1.9;
-  color:         var(--color-parchment);
+  font-family: 'IM Fell English', ui-serif, Georgia;
+  font-size: 1.125rem;
+  line-height: 1.9;
+  color: var(--color-parchment);
   letter-spacing: 0.01em;
 }
 
 /* --- Atmospheric Scrollbar --- */
-::-webkit-scrollbar { width: 6px; }
-::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
 ::-webkit-scrollbar-thumb {
   background: rgba(202, 138, 4, 0.2);
   border-radius: 3px;
 }
+
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(202, 138, 4, 0.4);
 }
 
 /* Custom scrollbar utility class */
-.custom-scrollbar { scrollbar-width: thin; scrollbar-color: rgba(202,138,4,0.2) transparent; }
+.custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(202, 138, 4, 0.2) transparent;
+}
 
 /* --- Glass Card Base --- */
 .glass-card {
-  background:   rgba(19, 17, 16, 0.8);
-  border:       1px solid rgba(202, 138, 4, 0.12);
+  background: rgba(19, 17, 16, 0.8);
+  border: 1px solid rgba(202, 138, 4, 0.12);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
 }
@@ -106,6 +118,7 @@ body {
 .torch-glow {
   box-shadow: var(--shadow-torch);
 }
+
 .blood-glow {
   box-shadow: var(--shadow-blood);
 }
@@ -131,16 +144,36 @@ body {
 }
 
 @keyframes ember-rise {
-  0%   { transform: translateY(0)      translateX(0)   scale(1);   opacity: 0;   }
-  5%   { opacity: 0.8; }
-  90%  { opacity: 0.5; }
-  100% { transform: translateY(-120px) translateX(var(--drift, 20px)) scale(0.3); opacity: 0; }
+  0% {
+    transform: translateY(0) translateX(0) scale(1);
+    opacity: 0;
+  }
+
+  5% {
+    opacity: 0.8;
+  }
+
+  90% {
+    opacity: 0.5;
+  }
+
+  100% {
+    transform: translateY(-120px) translateX(var(--drift, 20px)) scale(0.3);
+    opacity: 0;
+  }
 }
 
 /* --- HP Bar Pulse (critical health) --- */
 @keyframes hp-critical {
-  0%, 100% { box-shadow: 0 0 4px rgba(185,28,28,0.5); }
-  50%       { box-shadow: 0 0 12px rgba(185,28,28,0.9), 0 0 20px rgba(185,28,28,0.4); }
+
+  0%,
+  100% {
+    box-shadow: 0 0 4px rgba(185, 28, 28, 0.5);
+  }
+
+  50% {
+    box-shadow: 0 0 12px rgba(185, 28, 28, 0.9), 0 0 20px rgba(185, 28, 28, 0.4);
+  }
 }
 
 .hp-critical {
@@ -149,8 +182,13 @@ body {
 
 /* --- Parchment Text Shimmer --- */
 @keyframes shimmer {
-  0%   { background-position: -200% center; }
-  100% { background-position: 200%  center; }
+  0% {
+    background-position: -200% center;
+  }
+
+  100% {
+    background-position: 200% center;
+  }
 }
 
 .text-shimmer {
@@ -164,8 +202,15 @@ body {
 
 /* --- Page Transitions --- */
 @keyframes page-enter {
-  from { opacity: 0; transform: translateY(8px); }
-  to   { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .page-enter {
@@ -174,18 +219,38 @@ body {
 
 /* --- Parchment Card (used in GM messages) --- */
 .parchment-card {
-  background:   linear-gradient(135deg, rgba(31,27,20,0.95) 0%, rgba(20,18,15,0.98) 100%);
-  border:       1px solid rgba(202,138,4,0.18);
-  border-left:  3px solid rgba(202,138,4,0.4);
-  box-shadow:   var(--shadow-card), inset 0 0 20px rgba(202,138,4,0.03);
+  background: linear-gradient(135deg, rgba(31, 27, 20, 0.95) 0%, rgba(20, 18, 15, 0.98) 100%);
+  border: 1px solid rgba(202, 138, 4, 0.18);
+  border-left: 3px solid rgba(202, 138, 4, 0.4);
+  box-shadow: var(--shadow-card), inset 0 0 20px rgba(202, 138, 4, 0.03);
 }
 
 /* --- Campaign Theme Overrides (Right Panel) --- */
-[data-campaign="oakhaven-fall"]    { --campaign-color: #6b7280; }  /* Ash grey  */
-[data-campaign="leviathan-veil"]   { --campaign-color: #0891b2; }  /* Ocean teal */
-[data-campaign="eternal-flame"]    { --campaign-color: #d97706; }  /* Fire amber */
-[data-campaign="crimson-carnival"] { --campaign-color: #9333ea; }  /* Deep purple */
-[data-campaign="sand-king-tomb"]   { --campaign-color: #b45309; }  /* Desert ochre */
+[data-campaign="oakhaven-fall"] {
+  --campaign-color: #6b7280;
+}
+
+/* Ash grey  */
+[data-campaign="leviathan-veil"] {
+  --campaign-color: #0891b2;
+}
+
+/* Ocean teal */
+[data-campaign="eternal-flame"] {
+  --campaign-color: #d97706;
+}
+
+/* Fire amber */
+[data-campaign="crimson-carnival"] {
+  --campaign-color: #9333ea;
+}
+
+/* Deep purple */
+[data-campaign="sand-king-tomb"] {
+  --campaign-color: #b45309;
+}
+
+/* Desert ochre */
 
 /* --- Selection Highlight --- */
 ::selection {
@@ -202,7 +267,10 @@ body {
 
 /* --- Smooth Animations Preference --- */
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
+
+  *,
+  *::before,
+  *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;

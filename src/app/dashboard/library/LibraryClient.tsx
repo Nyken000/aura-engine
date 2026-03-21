@@ -1,10 +1,18 @@
 'use client'
 
-import { useState, useRef, useTransition } from 'react'
-import { uploadRuleBook, deleteRuleBook } from './actions'
-import { 
-  BookOpen, Upload, Trash2, CheckCircle, Clock, 
-  AlertCircle, FileText, Plus, X, Loader2 
+import { useCallback, useEffect, useRef, useState, useTransition } from 'react'
+import { deleteRuleBook, getRuleBooks, uploadRuleBook } from './actions'
+import {
+  BookOpen,
+  Upload,
+  Trash2,
+  CheckCircle,
+  Clock,
+  AlertCircle,
+  FileText,
+  Plus,
+  X,
+  Loader2,
 } from 'lucide-react'
 
 type RuleBook = {
@@ -16,19 +24,32 @@ type RuleBook = {
   processing_state: string
   processing_error?: string | null
   chunk_count?: number | null
+  indexed_at?: string | null
   created_at: string
 }
 
 const STATE_CONFIG = {
-  INDEXED:     { icon: CheckCircle, color: 'text-emerald-400', bg: 'bg-emerald-500/10 border-emerald-500/20', label: 'Indexado' },
-  PROCESSING:  { icon: Clock,       color: 'text-amber-400',   bg: 'bg-amber-500/10 border-amber-500/20',   label: 'Procesando...' },
-  FAILED:      { icon: AlertCircle, color: 'text-red-400',     bg: 'bg-red-500/10 border-red-500/20',       label: 'Error' },
+  INDEXED: { icon: CheckCircle, color: 'text-emerald-400', bg: 'bg-emerald-500/10 border-emerald-500/20', label: 'Indexado' },
+  PROCESSING: { icon: Clock, color: 'text-amber-400', bg: 'bg-amber-500/10 border-amber-500/20', label: 'Procesando...' },
+  FAILED: { icon: AlertCircle, color: 'text-red-400', bg: 'bg-red-500/10 border-red-500/20', label: 'Error' },
 }
 
 function formatBytes(bytes: number | null) {
   if (!bytes) return '—'
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+function formatIndexedAt(value?: string | null) {
+  if (!value) return null
+
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return null
+
+  return new Intl.DateTimeFormat('es-AR', {
+    dateStyle: 'short',
+    timeStyle: 'short',
+  }).format(date)
 }
 
 export default function LibraryClient({ initialBooks }: { initialBooks: RuleBook[] }) {
@@ -42,25 +63,76 @@ export default function LibraryClient({ initialBooks }: { initialBooks: RuleBook
   const [isPending, startTransition] = useTransition()
   const fileInputRef = useRef<HTMLInputElement>(null)
 
+  const refreshBooks = useCallback(async () => {
+    const nextBooks = await getRuleBooks()
+    setBooks(nextBooks)
+  }, [])
+
+  const hasProcessingBooks = books.some((book) => book.processing_state === 'PROCESSING')
+
+  useEffect(() => {
+    if (!hasProcessingBooks) return
+
+    let cancelled = false
+
+    const sync = async () => {
+      try {
+        const nextBooks = await getRuleBooks()
+        if (!cancelled) {
+          setBooks(nextBooks)
+        }
+      } catch (cause) {
+        console.error('Library sync error:', cause)
+      }
+    }
+
+    void sync()
+    const intervalId = window.setInterval(() => {
+      void sync()
+    }, 3000)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(intervalId)
+    }
+  }, [hasProcessingBooks])
+
   const handleFileSelect = (file: File) => {
-    if (!file.name.endsWith('.pdf')) { setError('Solo se aceptan archivos PDF.'); return }
-    if (file.size > 50 * 1024 * 1024) { setError('El archivo no puede superar 50MB.'); return }
+    if (!file.name.endsWith('.pdf')) {
+      setError('Solo se aceptan archivos PDF.')
+      return
+    }
+
+    if (file.size > 50 * 1024 * 1024) {
+      setError('El archivo no puede superar 50MB.')
+      return
+    }
+
     setError('')
     setSelectedFile(file)
     if (!title) setTitle(file.name.replace(/\.pdf$/i, '').replace(/[-_]/g, ' '))
   }
 
   const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault(); setDragging(false)
+    e.preventDefault()
+    setDragging(false)
     const file = e.dataTransfer.files[0]
     if (file) handleFileSelect(file)
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!selectedFile) { setError('Selecciona un archivo PDF.'); return }
-    if (!title.trim()) { setError('Escribe un título.'); return }
-    
+
+    if (!selectedFile) {
+      setError('Selecciona un archivo PDF.')
+      return
+    }
+
+    if (!title.trim()) {
+      setError('Escribe un título.')
+      return
+    }
+
     setError('')
     const fd = new FormData()
     fd.append('file', selectedFile)
@@ -69,48 +141,64 @@ export default function LibraryClient({ initialBooks }: { initialBooks: RuleBook
 
     startTransition(async () => {
       const res = await uploadRuleBook(fd)
+
       if (res.error) {
         setError(res.error)
-      } else {
-        // Optimistically add with PROCESSING state
-        setBooks(prev => [{
-          id: crypto.randomUUID(),
-          title: title.trim(),
-          description: description.trim() || null,
-          file_name: selectedFile!.name,
-          file_size: selectedFile!.size,
-          processing_state: res.state ?? 'PROCESSING',
-          created_at: new Date().toISOString()
-        }, ...prev])
-        setShowUpload(false)
-        setSelectedFile(null)
-        setTitle('')
-        setDescription('')
+        return
       }
+
+      if (res.book) {
+        setBooks((prev) => [res.book, ...prev.filter((book) => book.id !== res.book.id)])
+      }
+
+      setShowUpload(false)
+      setSelectedFile(null)
+      setTitle('')
+      setDescription('')
+
+      if (res.book?.id) {
+        void fetch('/api/admin/rule-books/process', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ ruleBookId: res.book.id }),
+        }).catch((cause) => {
+          console.error('Rule book processor trigger error:', cause)
+        })
+      }
+
+      await refreshBooks()
     })
   }
 
   const handleDelete = async (bookId: string) => {
     if (!confirm('¿Eliminar este libro de reglas? Esto también lo borrará del contexto del Oracle.')) return
-    setBooks(prev => prev.filter(b => b.id !== bookId))
-    startTransition(async () => { await deleteRuleBook(bookId) })
+
+    setError('')
+
+    startTransition(async () => {
+      const res = await deleteRuleBook(bookId)
+      if (res.error) {
+        setError(res.error)
+      }
+
+      await refreshBooks()
+    })
   }
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <p className="text-amber-500/60 text-xs font-display tracking-[0.15em] uppercase mb-1">Biblioteca de Reglas</p>
-          <h2 className="font-display text-2xl font-bold text-parchment-100">
-            Manuales D&D
-          </h2>
+          <h2 className="font-display text-2xl font-bold text-parchment-100">Manuales D&D</h2>
           <p className="text-sm text-foreground/50 mt-1 max-w-md">
             Sube manuales en PDF (PHB, DMG, etc.) para que el Oracle y el Game Master apliquen las reglas oficiales de D&D.
           </p>
         </div>
         <button
-          onClick={() => setShowUpload(v => !v)}
+          onClick={() => setShowUpload((v) => !v)}
           className="flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/25 hover:border-amber-500/50 text-amber-400 font-medium text-sm transition-all duration-200 cursor-pointer"
         >
           {showUpload ? <X className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
@@ -118,31 +206,33 @@ export default function LibraryClient({ initialBooks }: { initialBooks: RuleBook
         </button>
       </div>
 
-      {/* Upload Form */}
       {showUpload && (
         <div className="p-6 rounded-2xl border border-amber-900/30 bg-stone-950/60 space-y-4 animate-in fade-in slide-in-from-top-2 duration-200">
           <form onSubmit={handleSubmit} className="space-y-4">
-            
-            {/* Drop Zone */}
             <div
-              onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
+              onDragOver={(e) => {
+                e.preventDefault()
+                setDragging(true)
+              }}
               onDragLeave={() => setDragging(false)}
               onDrop={handleDrop}
               onClick={() => fileInputRef.current?.click()}
-              className={`relative border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all duration-200 ${
-                dragging
+              className={`relative border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all duration-200 ${dragging
                   ? 'border-amber-400/60 bg-amber-500/10'
                   : selectedFile
-                  ? 'border-emerald-500/40 bg-emerald-500/5'
-                  : 'border-amber-900/40 hover:border-amber-500/40 hover:bg-amber-500/5'
-              }`}
+                    ? 'border-emerald-500/40 bg-emerald-500/5'
+                    : 'border-amber-900/40 hover:border-amber-500/40 hover:bg-amber-500/5'
+                }`}
             >
               <input
                 ref={fileInputRef}
                 type="file"
                 accept=".pdf"
                 className="hidden"
-                onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileSelect(f) }}
+                onChange={(e) => {
+                  const file = e.target.files?.[0]
+                  if (file) handleFileSelect(file)
+                }}
               />
               {selectedFile ? (
                 <div className="flex flex-col items-center gap-2">
@@ -163,7 +253,6 @@ export default function LibraryClient({ initialBooks }: { initialBooks: RuleBook
               )}
             </div>
 
-            {/* Title */}
             <div>
               <label className="text-xs font-bold text-foreground/50 uppercase tracking-wider mb-1.5 block">Título del manual</label>
               <input
@@ -175,7 +264,6 @@ export default function LibraryClient({ initialBooks }: { initialBooks: RuleBook
               />
             </div>
 
-            {/* Description */}
             <div>
               <label className="text-xs font-bold text-foreground/50 uppercase tracking-wider mb-1.5 block">Descripción (opcional)</label>
               <input
@@ -199,21 +287,24 @@ export default function LibraryClient({ initialBooks }: { initialBooks: RuleBook
               className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-amber-600/80 hover:bg-amber-600 text-white font-bold text-sm transition-all duration-200 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed shadow-torch-sm hover:shadow-torch"
             >
               {isPending ? (
-                <><Loader2 className="w-4 h-4 animate-spin" /> Subiendo y procesando...</>
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" /> Subiendo manual...
+                </>
               ) : (
-                <><Upload className="w-4 h-4" /> Subir manual al Oracle</>
+                <>
+                  <Upload className="w-4 h-4" /> Subir manual al Oracle
+                </>
               )}
             </button>
           </form>
 
           <div className="text-xs text-foreground/30 text-center space-y-1">
-            <p>El PDF se sube, se fragmenta y se indexa con embeddings para búsqueda semántica.</p>
-            <p>Una vez indexado, el Oracle y el GM lo usarán como referencia automáticamente.</p>
+            <p>La subida crea el registro y deja el manual en procesamiento dentro de Supabase.</p>
+            <p>La indexación corre desacoplada y la biblioteca refleja el estado real desde la base.</p>
           </div>
         </div>
       )}
 
-      {/* Book List */}
       {books.length === 0 && !showUpload ? (
         <div className="flex flex-col items-center justify-center py-16 gap-4 opacity-60">
           <div className="w-16 h-16 rounded-full bg-amber-500/10 border border-amber-500/20 flex items-center justify-center">
@@ -229,6 +320,8 @@ export default function LibraryClient({ initialBooks }: { initialBooks: RuleBook
           {books.map((book) => {
             const cfg = STATE_CONFIG[book.processing_state as keyof typeof STATE_CONFIG] ?? STATE_CONFIG.PROCESSING
             const Icon = cfg.icon
+            const indexedAt = formatIndexedAt(book.indexed_at)
+
             return (
               <div
                 key={book.id}
@@ -246,16 +339,29 @@ export default function LibraryClient({ initialBooks }: { initialBooks: RuleBook
                     <span className="text-[10px] text-foreground/30">{book.file_name}</span>
                     <span className="text-[10px] text-foreground/20">·</span>
                     <span className="text-[10px] text-foreground/30">{formatBytes(book.file_size)}</span>
+                    {typeof book.chunk_count === 'number' && book.chunk_count > 0 && (
+                      <>
+                        <span className="text-[10px] text-foreground/20">·</span>
+                        <span className="text-[10px] text-foreground/30">{book.chunk_count} chunks</span>
+                      </>
+                    )}
+                    {indexedAt && (
+                      <>
+                        <span className="text-[10px] text-foreground/20">·</span>
+                        <span className="text-[10px] text-foreground/30">{indexedAt}</span>
+                      </>
+                    )}
                   </div>
+                  {book.processing_error && (
+                    <p className="text-xs text-red-400 mt-1 truncate">{book.processing_error}</p>
+                  )}
                 </div>
 
-                {/* State Badge */}
                 <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-medium ${cfg.bg} ${cfg.color} shrink-0`}>
                   <Icon className={`w-3 h-3 ${book.processing_state === 'PROCESSING' ? 'animate-spin' : ''}`} />
                   {cfg.label}
                 </div>
 
-                {/* Delete */}
                 <button
                   onClick={() => handleDelete(book.id)}
                   className="p-2 text-foreground/20 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all duration-200 opacity-0 group-hover:opacity-100 cursor-pointer shrink-0"

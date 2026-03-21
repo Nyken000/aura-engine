@@ -389,11 +389,13 @@ export function computeCombatRoundTurnLabel(state: SessionCombatStateRecord): st
 
 export function updateSessionCombatStateFromModel(params: {
   currentState: SessionCombatStateRecord
-  update: any
+  update: Omit<Partial<SessionCombatStateRecord>, 'participants'> & {
+    participants?: CombatParticipant[]
+  }
   sessionPlayers: SessionPlayerRow[]
 }): SessionCombatStateRecord {
   const { currentState, update, sessionPlayers } = params
-  let nextState = { ...currentState }
+  const nextState = { ...currentState }
 
   if (typeof update.round === 'number') {
     nextState.round = update.round

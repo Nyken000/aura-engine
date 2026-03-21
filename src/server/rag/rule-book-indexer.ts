@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import pdf from 'pdf-parse'
+// import pdf from 'pdf-parse' - Moved to indexRuleBook to avoid top-level import issues
 
 type RuleBookChunkInsert = {
     rule_book_id: string
@@ -9,6 +9,7 @@ type RuleBookChunkInsert = {
     page_from: number | null
     page_to: number | null
     embedding: number[]
+    embedding_vector: string
 }
 
 type SearchResult = {
@@ -18,12 +19,6 @@ type SearchResult = {
     similarity: number
     page_from?: number | null
     page_to?: number | null
-}
-
-type RuleBookRow = {
-    id: string
-    title: string
-    processing_state: string
 }
 
 type RuleBookChunkRow = {
@@ -36,10 +31,36 @@ type RuleBookChunkRow = {
     embedding: number[]
 }
 
+type RuleBookForProcessingRow = {
+    id: string
+    title: string
+    storage_path: string
+    processing_state: string
+}
+
+type RuleBookStatePatch = {
+    processing_state?: 'PROCESSING' | 'INDEXED' | 'FAILED'
+    processing_error?: string | null
+    chunk_count?: number
+    indexed_at?: string | null
+}
+
+type RuleBookChunkRpcRow = {
+    id: string
+    rule_book_id: string
+    chunk_index: number
+    title: string
+    content: string
+    page_from: number | null
+    page_to: number | null
+    similarity: number
+}
+
 const DEFAULT_OLLAMA_BASE_URL = 'http://127.0.0.1:11434'
 const DEFAULT_OLLAMA_EMBED_MODEL = 'embeddinggemma'
 const MAX_CHUNK_CHARS = 1800
 const CHUNK_OVERLAP_CHARS = 300
+const RULE_BOOK_EMBEDDING_DIMENSIONS = 768
 
 function getOllamaBaseUrl(): string {
     return (process.env.OLLAMA_BASE_URL || DEFAULT_OLLAMA_BASE_URL).replace(/\/$/, '')
@@ -151,6 +172,7 @@ function chunkRuleBookText(ruleBookTitle: string, text: string): Array<{
                 chunks.push(slice)
             }
         }
+
         current = ''
     }
 
@@ -183,15 +205,28 @@ function cosineSimilarity(a: number[], b: number[]): number {
     return dot / (Math.sqrt(normA) * Math.sqrt(normB))
 }
 
+function toVectorLiteral(values: number[]): string {
+    return `[${values.join(',')}]`
+}
+
+function normalizeEmbeddingDimensions(embedding: number[]): number[] {
+    if (embedding.length === RULE_BOOK_EMBEDDING_DIMENSIONS) {
+        return embedding
+    }
+
+    if (embedding.length > RULE_BOOK_EMBEDDING_DIMENSIONS) {
+        return embedding.slice(0, RULE_BOOK_EMBEDDING_DIMENSIONS)
+    }
+
+    throw new Error(
+        `Dimensión de embedding no compatible para rule_book_chunks: esperada ${RULE_BOOK_EMBEDDING_DIMENSIONS}, recibida ${embedding.length}.`,
+    )
+}
+
 async function updateRuleBookState(
     supabase: SupabaseClient,
     ruleBookId: string,
-    patch: {
-        processing_state?: 'PROCESSING' | 'INDEXED' | 'FAILED'
-        processing_error?: string | null
-        chunk_count?: number
-        indexed_at?: string | null
-    },
+    patch: RuleBookStatePatch,
 ): Promise<void> {
     const { error } = await supabase
         .from('rule_books')
@@ -203,6 +238,53 @@ async function updateRuleBookState(
     }
 }
 
+async function markRuleBookProcessing(supabase: SupabaseClient, ruleBookId: string): Promise<void> {
+    await updateRuleBookState(supabase, ruleBookId, {
+        processing_state: 'PROCESSING',
+        processing_error: null,
+        chunk_count: 0,
+        indexed_at: null,
+    })
+}
+
+async function markRuleBookFailed(supabase: SupabaseClient, ruleBookId: string, message: string): Promise<void> {
+    await updateRuleBookState(supabase, ruleBookId, {
+        processing_state: 'FAILED',
+        processing_error: message,
+        indexed_at: null,
+    })
+}
+
+async function fetchRuleBookForProcessing(
+    supabase: SupabaseClient,
+    ruleBookId: string,
+): Promise<RuleBookForProcessingRow> {
+    const { data, error } = await supabase
+        .from('rule_books')
+        .select('id, title, storage_path, processing_state')
+        .eq('id', ruleBookId)
+        .single()
+
+    if (error || !data) {
+        throw new Error(`No se pudo cargar el manual para indexar: ${error?.message || 'No encontrado.'}`)
+    }
+
+    return data as RuleBookForProcessingRow
+}
+
+async function downloadRuleBookBuffer(supabase: SupabaseClient, storagePath: string): Promise<Buffer> {
+    const { data, error } = await supabase.storage
+        .from('rule-books')
+        .download(storagePath)
+
+    if (error || !data) {
+        throw new Error(`No se pudo descargar el PDF del storage: ${error?.message || 'Archivo no encontrado.'}`)
+    }
+
+    const bytes = await data.arrayBuffer()
+    return Buffer.from(bytes)
+}
+
 export async function indexRuleBook(params: {
     supabase: SupabaseClient
     ruleBookId: string
@@ -211,14 +293,10 @@ export async function indexRuleBook(params: {
 }): Promise<{ chunkCount: number }> {
     const { supabase, ruleBookId, ruleBookTitle, fileBuffer } = params
 
-    await updateRuleBookState(supabase, ruleBookId, {
-        processing_state: 'PROCESSING',
-        processing_error: null,
-        chunk_count: 0,
-        indexed_at: null,
-    })
+    await markRuleBookProcessing(supabase, ruleBookId)
 
     try {
+        const pdf = (await import('pdf-parse')).default
         const parsed = await pdf(fileBuffer)
         const normalizedText = normalizePdfText(parsed.text || '')
 
@@ -234,7 +312,7 @@ export async function indexRuleBook(params: {
         const rows: RuleBookChunkInsert[] = []
         for (let i = 0; i < chunks.length; i += 1) {
             const chunk = chunks[i]
-            const embedding = await generateEmbedding(chunk.content)
+            const embedding = normalizeEmbeddingDimensions(await generateEmbedding(chunk.content))
 
             rows.push({
                 rule_book_id: ruleBookId,
@@ -244,6 +322,7 @@ export async function indexRuleBook(params: {
                 page_from: chunk.page_from,
                 page_to: chunk.page_to,
                 embedding,
+                embedding_vector: toVectorLiteral(embedding),
             })
         }
 
@@ -279,44 +358,95 @@ export async function indexRuleBook(params: {
     } catch (error) {
         const message = error instanceof Error ? error.message : 'Error desconocido durante la indexación.'
 
-        await updateRuleBookState(supabase, ruleBookId, {
-            processing_state: 'FAILED',
-            processing_error: message,
-            indexed_at: null,
-        })
-
+        await markRuleBookFailed(supabase, ruleBookId, message)
         throw error
     }
 }
 
-export async function searchRelevantRuleBookChunks(params: {
+export async function processRuleBookIndexing(params: {
     supabase: SupabaseClient
-    query: string
-    limit?: number
-    minSimilarity?: number
-}): Promise<SearchResult[]> {
-    const { supabase, query, limit = 3, minSimilarity = 0.18 } = params
+    ruleBookId: string
+}): Promise<{ chunkCount: number; skipped?: false } | { chunkCount: 0; skipped: true }> {
+    const { supabase, ruleBookId } = params
+    const ruleBook = await fetchRuleBookForProcessing(supabase, ruleBookId)
 
-    const queryEmbedding = await generateEmbedding(query)
-
-    const { data: books, error: booksError } = await supabase
-        .from('rule_books')
-        .select('id, title, processing_state')
-        .eq('processing_state', 'INDEXED')
-
-    if (booksError) {
-        throw new Error(`No se pudieron leer los rule_books indexados: ${booksError.message}`)
+    if (ruleBook.processing_state === 'INDEXED') {
+        return {
+            chunkCount: 0,
+            skipped: true,
+        }
     }
 
-    const indexedBooks = (books as RuleBookRow[] | null) ?? []
-    if (indexedBooks.length === 0) return []
+    await markRuleBookProcessing(supabase, ruleBookId)
 
-    const indexedBookIds = indexedBooks.map((book) => book.id)
+    try {
+        const fileBuffer = await downloadRuleBookBuffer(supabase, ruleBook.storage_path)
+        return await indexRuleBook({
+            supabase,
+            ruleBookId,
+            ruleBookTitle: ruleBook.title,
+            fileBuffer,
+        })
+    } catch (error) {
+        const message = error instanceof Error ? error.message : 'Error desconocido durante la indexación.'
+        await markRuleBookFailed(supabase, ruleBookId, message)
+        throw error
+    }
+}
+
+async function searchRelevantRuleBookChunksVector(params: {
+    supabase: SupabaseClient
+    queryEmbedding: number[]
+    limit: number
+    minSimilarity: number
+}): Promise<SearchResult[]> {
+    const { supabase, queryEmbedding, limit, minSimilarity } = params
+    const queryEmbeddingVector = toVectorLiteral(normalizeEmbeddingDimensions(queryEmbedding))
+
+    const { data, error } = await supabase.rpc('match_rule_book_chunks', {
+        query_embedding: queryEmbeddingVector,
+        match_threshold: minSimilarity,
+        match_count: limit,
+        filter_rule_book_id: null,
+    })
+
+    if (error) {
+        throw new Error(`RPC match_rule_book_chunks falló: ${error.message}`)
+    }
+
+    const rows = (data as RuleBookChunkRpcRow[] | null) ?? []
+
+    return rows.map((row) => ({
+        id: row.id ?? `${row.rule_book_id}:${row.chunk_index}`,
+        title: row.title,
+        content: row.content,
+        similarity: row.similarity,
+        page_from: row.page_from,
+        page_to: row.page_to,
+    }))
+}
+
+async function searchRelevantRuleBookChunksLegacy(params: {
+    supabase: SupabaseClient
+    queryEmbedding: number[]
+    limit: number
+    minSimilarity: number
+}): Promise<SearchResult[]> {
+    const { supabase, queryEmbedding, limit, minSimilarity } = params
 
     const { data: chunks, error: chunksError } = await supabase
         .from('rule_book_chunks')
-        .select('rule_book_id, chunk_index, title, content, page_from, page_to, embedding')
-        .in('rule_book_id', indexedBookIds)
+        .select(`
+      rule_book_id,
+      chunk_index,
+      title,
+      content,
+      page_from,
+      page_to,
+      embedding,
+      rule_books!inner(processing_state)
+    `)
+        .eq('rule_books.processing_state', 'INDEXED')
 
     if (chunksError) {
         throw new Error(`No se pudieron leer los chunks indexados: ${chunksError.message}`)
@@ -325,7 +455,7 @@ export async function searchRelevantRuleBookChunks(params: {
     const candidates = ((chunks as RuleBookChunkRow[] | null) ?? [])
         .map((chunk) => {
             const embedding = Array.isArray(chunk.embedding)
-                ? chunk.embedding
+                ? normalizeEmbeddingDimensions(chunk.embedding)
                 : []
 
             const similarity = cosineSimilarity(queryEmbedding, embedding)
@@ -335,7 +465,17 @@ export async function searchRelevantRuleBookChunks(params: {
             }
         })
         .filter((chunk) => chunk.similarity >= minSimilarity)
-        .sort((a, b) => b.similarity - a.similarity)
+        .sort((a, b) => {
+            if (b.similarity !== a.similarity) {
+                return b.similarity - a.similarity
+            }
+
+            if (a.rule_book_id !== b.rule_book_id) {
+                return a.rule_book_id.localeCompare(b.rule_book_id)
+            }
+
+            return a.chunk_index - b.chunk_index
+        })
         .slice(0, limit)
 
     return candidates.map((chunk) => ({
@@ -346,4 +486,33 @@ export async function searchRelevantRuleBookChunks(params: {
         page_from: chunk.page_from,
         page_to: chunk.page_to,
     }))
+}
+
+export async function searchRelevantRuleBookChunks(params: {
+    supabase: SupabaseClient
+    query: string
+    limit?: number
+    minSimilarity?: number
+}): Promise<SearchResult[]> {
+    const { supabase, query, limit = 3, minSimilarity = 0.18 } = params
+
+    const queryEmbedding = normalizeEmbeddingDimensions(await generateEmbedding(query))
+
+    try {
+        return await searchRelevantRuleBookChunksVector({
+            supabase,
+            queryEmbedding,
+            limit,
+            minSimilarity,
+        })
+    } catch (vectorError) {
+        console.warn('Vector retrieval falló; usando fallback legacy en memoria.', vectorError)
+
+        return searchRelevantRuleBookChunksLegacy({
+            supabase,
+            queryEmbedding,
+            limit,
+            minSimilarity,
+        })
+    }
 }

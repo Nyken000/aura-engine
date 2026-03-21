@@ -3,7 +3,19 @@
 import { createClient } from '@/utils/supabase/server'
 import { isAdmin } from '@/utils/auth/roles'
 import { revalidatePath } from 'next/cache'
-import { indexRuleBook } from '@/server/rag/rule-book-indexer'
+
+type RuleBookListItem = {
+  id: string
+  title: string
+  description: string | null
+  file_name: string
+  file_size: number | null
+  processing_state: string
+  processing_error: string | null
+  chunk_count: number | null
+  indexed_at?: string | null
+  created_at: string
+}
 
 export async function uploadRuleBook(formData: FormData) {
   const supabase = createClient()
@@ -39,7 +51,7 @@ export async function uploadRuleBook(formData: FormData) {
       return { error: `Error al subir al storage: ${storageError.message}` }
     }
 
-    const { data: insertedBooks, error: dbError } = await supabase
+    const { data: insertedBook, error: dbError } = await supabase
       .from('rule_books')
       .insert([
         {
@@ -56,29 +68,23 @@ export async function uploadRuleBook(formData: FormData) {
           indexed_at: null,
         },
       ])
-      .select('id')
-      .limit(1)
+      .select('id, title, description, file_name, file_size, processing_state, processing_error, chunk_count, indexed_at, created_at')
+      .single()
 
-    if (dbError || !insertedBooks || insertedBooks.length === 0) {
+    if (dbError || !insertedBook) {
       await supabase.storage.from('rule-books').remove([storagePath]).catch(() => { })
       return { error: `Error al guardar el registro: ${dbError?.message || 'No se pudo crear el libro.'}` }
     }
 
-    const ruleBookId = insertedBooks[0].id as string
-
-    await indexRuleBook({
-      supabase,
-      ruleBookId,
-      ruleBookTitle: title.trim(),
-      fileBuffer: buffer,
-    })
-
     revalidatePath('/dashboard/library')
-    return { success: true, state: 'INDEXED' }
-  } catch (error: unknown) {
-    console.error('Rule book upload/index error:', error)
     return {
-      error: error instanceof Error ? error.message : 'Error desconocido al subir e indexar el manual.',
+      success: true,
+      book: insertedBook as RuleBookListItem,
+    }
+  } catch (error: unknown) {
+    console.error('Rule book upload error:', error)
+    return {
+      error: error instanceof Error ? error.message : 'Error desconocido al subir el manual.',
     }
   }
 }
@@ -119,15 +125,15 @@ export async function deleteRuleBook(bookId: string) {
   }
 }
 
-export async function getRuleBooks() {
+export async function getRuleBooks(): Promise<RuleBookListItem[]> {
   const supabase = createClient()
 
   if (!(await isAdmin())) return []
 
   const { data } = await supabase
     .from('rule_books')
-    .select('*')
+    .select('id, title, description, file_name, file_size, processing_state, processing_error, chunk_count, indexed_at, created_at')
     .order('created_at', { ascending: false })
 
-  return data ?? []
+  return (data as RuleBookListItem[] | null) ?? []
 }

@@ -15,6 +15,11 @@ type SessionPlayerRow = {
   user_id: string
 }
 
+type SessionRouteRecord = {
+  id: string
+  invite_code: string
+}
+
 export async function createGameSession(formData: FormData) {
   const supabase = createClient()
   const {
@@ -39,6 +44,7 @@ export async function createGameSession(formData: FormData) {
   await supabase.from('session_players').insert({
     session_id: session.id,
     user_id: user.id,
+    status: 'joined',
   })
 
   await supabase.from('session_combat_states').upsert(createEmptySessionCombatState(session.id), {
@@ -63,7 +69,7 @@ export async function joinGameSession(formData: FormData) {
 
   const { data: session, error: sessErr } = await supabase
     .from('game_sessions')
-    .select('id, status, max_players')
+    .select('id, status, max_players, invite_code')
     .eq('invite_code', inviteCode)
     .single()
 
@@ -95,6 +101,7 @@ export async function joinGameSession(formData: FormData) {
       session_id: session.id,
       user_id: user.id,
       character_id: characterId,
+      status: 'joined',
     })
   }
 
@@ -102,7 +109,8 @@ export async function joinGameSession(formData: FormData) {
     onConflict: 'session_id',
   })
 
-  redirect(`/session/${inviteCode}`)
+  revalidatePath(`/session/${session.invite_code}`)
+  redirect(`/session/${session.invite_code}`)
 }
 
 export async function selectCharacterForSession(sessionId: string, characterId: string) {
@@ -122,13 +130,49 @@ export async function selectCharacterForSession(sessionId: string, characterId: 
 
   if (!character) throw new Error('Personaje no encontrado')
 
-  await supabase
+  const { data: session } = await supabase
+    .from('game_sessions')
+    .select('id, invite_code')
+    .eq('id', sessionId)
+    .single()
+
+  const typedSession = (session as SessionRouteRecord | null) ?? null
+  if (!typedSession) throw new Error('Sesión no encontrada')
+
+  const { data: membership } = await supabase
     .from('session_players')
-    .update({ character_id: characterId })
+    .select('id')
     .eq('session_id', sessionId)
     .eq('user_id', user.id)
+    .single()
 
-  revalidatePath(`/session/[code]`, 'page')
+  if (membership?.id) {
+    const { error } = await supabase
+      .from('session_players')
+      .update({
+        character_id: characterId,
+        status: 'joined',
+      })
+      .eq('id', membership.id)
+
+    if (error) {
+      throw new Error(`No se pudo vincular el personaje: ${error.message}`)
+    }
+  } else {
+    const { error } = await supabase.from('session_players').insert({
+      session_id: sessionId,
+      user_id: user.id,
+      character_id: characterId,
+      status: 'joined',
+    })
+
+    if (error) {
+      throw new Error(`No se pudo crear la entrada del jugador: ${error.message}`)
+    }
+  }
+
+  revalidatePath(`/session/${typedSession.invite_code}`)
+  revalidatePath(`/play/${characterId}`)
 }
 
 export async function startGameSession(sessionId: string) {
@@ -195,7 +239,7 @@ export async function kickPlayerFromSession(sessionId: string, targetUserId: str
 
   const { data: session } = await supabase
     .from('game_sessions')
-    .select('host_id')
+    .select('host_id, invite_code')
     .eq('id', sessionId)
     .single()
 
@@ -207,7 +251,9 @@ export async function kickPlayerFromSession(sessionId: string, targetUserId: str
     .eq('session_id', sessionId)
     .eq('user_id', targetUserId)
 
-  revalidatePath(`/session/[code]`, 'page')
+  if (session?.invite_code) {
+    revalidatePath(`/session/${session.invite_code}`)
+  }
 }
 
 export async function advanceTurn(sessionId: string) {
@@ -268,19 +314,22 @@ export async function endGameSession(sessionId: string) {
 
   const { data: session } = await supabase
     .from('game_sessions')
-    .select('host_id')
+    .select('host_id, invite_code')
     .eq('id', sessionId)
     .single()
 
-  if (session?.host_id !== user.id) throw new Error('Solo el host puede finalizar la sesión')
+  if (!session || session.host_id !== user.id) throw new Error('Solo el host puede terminar la sesión')
 
-  await Promise.all([
-    supabase.from('game_sessions').update({ status: 'ended' }).eq('id', sessionId),
-    supabase
-      .from('session_combat_states')
-      .update({ status: 'ended', participants: [], round: 1, turn_index: 0 })
-      .eq('session_id', sessionId),
-  ])
+  const { error } = await supabase
+    .from('game_sessions')
+    .update({ status: 'ended' })
+    .eq('id', sessionId)
 
+  if (error) throw new Error(`Error al terminar sesión: ${error.message}`)
+
+  if (session.invite_code) {
+    revalidatePath(`/session/${session.invite_code}`)
+  }
+  revalidatePath('/dashboard')
   redirect('/dashboard')
 }

@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "next lint",
     "test:combat": "tsx --test src/server/combat/**/*.test.ts",
-    "test:stream": "tsx --test src/server/engine/**/*.test.ts"
+    "test:stream": "tsx --test src/server/engine/**/*.test.ts",
+    "test:play": "tsx --test \"src/app/play/*/*.test.ts\""
   },
   "dependencies": {
     "@google/genai": "^1.44.0",

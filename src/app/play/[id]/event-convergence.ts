@@ -5,21 +5,28 @@ export type TimelineEvent = {
   client_event_id?: string | null
 }
 
+function compareTimelineEvents<T extends TimelineEvent>(a: T, b: T): number {
+  const aHasIndex = typeof a.event_index === 'number'
+  const bHasIndex = typeof b.event_index === 'number'
+
+  if (aHasIndex && bHasIndex && a.event_index !== b.event_index) {
+    return (a.event_index ?? 0) - (b.event_index ?? 0)
+  }
+
+  if (aHasIndex !== bHasIndex) {
+    return aHasIndex ? -1 : 1
+  }
+
+  const createdAtDelta = new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+  if (createdAtDelta !== 0) {
+    return createdAtDelta
+  }
+
+  return a.id.localeCompare(b.id)
+}
+
 export function sortTimelineEvents<T extends TimelineEvent>(events: T[]): T[] {
-  return [...events].sort((a, b) => {
-    const aHasIndex = typeof a.event_index === 'number'
-    const bHasIndex = typeof b.event_index === 'number'
-
-    if (aHasIndex && bHasIndex && a.event_index !== b.event_index) {
-      return (a.event_index ?? 0) - (b.event_index ?? 0)
-    }
-
-    if (aHasIndex !== bHasIndex) {
-      return aHasIndex ? -1 : 1
-    }
-
-    return new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-  })
+  return [...events].sort(compareTimelineEvents)
 }
 
 export function mergeTimelineEvent<T extends TimelineEvent>(prev: T[], incoming: T): T[] {
@@ -44,6 +51,15 @@ export function mergeTimelineEvent<T extends TimelineEvent>(prev: T[], incoming:
 
   next.push(incoming)
   return sortTimelineEvents(next)
+}
+
+export function reconcileTimelineSnapshot<T extends TimelineEvent>(
+  prev: T[],
+  snapshot: T[],
+): T[] {
+  return sortTimelineEvents(snapshot).reduce<T[]>((acc, event) => {
+    return mergeTimelineEvent(acc, event)
+  }, [...prev])
 }
 
 export function getHighestTimelineEventIndex<T extends TimelineEvent>(events: T[]): number | null {

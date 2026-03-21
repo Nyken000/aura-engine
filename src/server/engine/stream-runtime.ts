@@ -20,6 +20,12 @@ import {
     updateSessionCombatStateFromModel,
 } from "@/server/combat/session-combat-service";
 import type { SessionCombatTransitionEvent } from "@/server/combat/session-combat-transitions";
+import {
+    buildGmOutputFormatInstructions,
+    normalizeDiceRollRequestForEvent,
+    parseGmStructuredOutput,
+    type CombatUpdate,
+} from "@/server/engine/gm-output-contract";
 
 type CharacterInventoryItem = {
     name?: string;
@@ -84,39 +90,10 @@ type StreamRequestBody = {
     content?: string;
     sessionId?: string | null;
     clientEventId?: string | null;
+    channel?: "adventure" | "group";
 };
 
-type StateChanges = {
-    hp_delta?: number;
-    inventory_added?: string[];
-    inventory_removed?: string[];
-};
 
-type DiceRollRequest = {
-    needed?: boolean;
-    stat?: string | null;
-    skill?: string | null;
-    dc?: number | null;
-    reason?: string | null;
-};
-
-type MaybeDiceRollRequired = DiceRollRequest | null;
-
-type CombatParticipantDraft = {
-    name: string;
-    hp: number;
-    max_hp: number;
-    ac: number;
-    initiative?: number;
-};
-
-type CombatUpdate = {
-    start?: boolean;
-    end?: boolean;
-    participants?: CombatParticipantDraft[];
-    turn_index?: number;
-    round?: number;
-};
 
 type DiceRollOutcome = {
     stat: string;
@@ -187,10 +164,6 @@ export interface EngineStreamModelGateway {
     }): Promise<AsyncIterable<StreamModelChunk>>;
 }
 
-function toJsonObject(value: unknown): JsonObject | null {
-    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-    return value as JsonObject;
-}
 
 function buildDiceResolutionPrompt(result: DiceRollOutcome): string {
     const skillLabel = result.skill || result.stat.toUpperCase();
@@ -205,69 +178,7 @@ function buildDiceResolutionPrompt(result: DiceRollOutcome): string {
     return `El jugador ya realizó la tirada solicitada para ${skillLabel}. Resultado final: ${result.total} contra CD ${result.dc} (${successLabel}).${criticalLabel} Resuelve ahora la consecuencia narrativa y mecánica de este resultado sin pedir otra tirada para la misma acción.`;
 }
 
-function parseModelResponse(fullResponse: string): {
-    narrative: string;
-    stateChanges: StateChanges | null;
-    diceRollRequired: MaybeDiceRollRequired;
-    combatUpdate: CombatUpdate | null;
-    combatEventResolution: CombatEventResolution;
-} {
-    const cleaned = fullResponse
-        .replace(/```json\s*/gi, "")
-        .replace(/```\s*/g, "")
-        .trim();
 
-    let narrative = "";
-    let stateChanges: StateChanges | null = null;
-    let diceRollRequired: MaybeDiceRollRequired = null;
-    let combatUpdate: CombatUpdate | null = null;
-    let combatEventResolution: CombatEventResolution = null;
-
-    try {
-        const jsonBlock = cleaned.match(/\{[\s\S]*\}/);
-        if (jsonBlock) {
-            const evaluation = JSON.parse(jsonBlock[0]) as {
-                narrative_response?: string;
-                state_changes?: StateChanges;
-                dice_roll_required?: MaybeDiceRollRequired;
-                combat?: CombatUpdate;
-                combat_events?: unknown;
-            };
-
-            narrative = evaluation.narrative_response ?? "";
-            stateChanges = evaluation.state_changes ?? null;
-            diceRollRequired = evaluation.dice_roll_required ?? null;
-            combatUpdate = evaluation.combat ?? null;
-            combatEventResolution = normalizeCombatEventResolution(
-                evaluation.combat_events,
-            );
-        }
-    } catch {
-        // noop
-    }
-
-    if (!narrative) {
-        const match = cleaned.match(
-            /"narrative_response"\s*:\s*"((?:[^"\\]|\\.)*)"/,
-        );
-        if (match) {
-            narrative = match[1]
-                .replace(/\\n/g, "\n")
-                .replace(/\\"/g, '"')
-                .replace(/\\\\/g, "\\");
-        } else {
-            narrative = cleaned;
-        }
-    }
-
-    return {
-        narrative,
-        stateChanges,
-        diceRollRequired,
-        combatUpdate,
-        combatEventResolution,
-    };
-}
 
 function safeArray<T>(value: T[] | null | undefined): T[] {
     return Array.isArray(value) ? value : [];
@@ -352,47 +263,7 @@ function buildPrompt(params: {
     return `
 Eres Aura, una game master de RPG multijugador con narrativa premium, consistente y estructurada.
 Responde SIEMPRE en español.
-Debes devolver un único JSON válido con esta forma exacta:
-
-{
-  "narrative_response": "texto narrativo para el jugador",
-  "state_changes": {
-    "hp_delta": 0,
-    "inventory_added": [],
-    "inventory_removed": []
-  },
-  "dice_roll_required": {
-    "needed": false,
-    "stat": null,
-    "skill": null,
-    "dc": null,
-    "reason": null
-  },
-  "combat": {
-    "start": false,
-    "end": false,
-    "participants": [],
-    "turn_index": 0,
-    "round": 1
-  },
-  "combat_events": {
-    "damage_applied": null,
-    "healing_applied": null,
-    "condition_applied": null,
-    "condition_removed": null,
-    "combat_ended": null
-  }
-}
-
-Reglas importantes:
-- No escribas texto fuera del JSON.
-- Si no corresponde un bloque, mantenlo como null o con valores vacíos válidos.
-- Si el jugador ya tiró dados y el resultado está indicado en el prompt, no pidas otra tirada para esa misma acción.
-- Si hay combate multijugador activo, respeta el estado compartido.
-- Solo avanza turno mediante consecuencia narrativa apropiada; el evento explícito lo persiste el backend.
-- Si una regla del manual es relevante, priorízala.
-- No inventes páginas ni cites reglas inexistentes.
-- Mantén consistencia con el historial reciente.
+${buildGmOutputFormatInstructions()}
 
 MUNDO
 Nombre: ${worldName}
@@ -457,201 +328,11 @@ function parseDiceResultMarker(content: string): DiceRollOutcome | null {
     }
 }
 
-function toParticipantReference(value: unknown): CombatParticipantReference | null {
-    if (!value || typeof value !== "object" || Array.isArray(value)) {
-        return null;
-    }
 
-    const candidate = value as Record<string, unknown>;
-    const participantId =
-        typeof candidate.participant_id === "string"
-            ? candidate.participant_id
-            : typeof candidate.id === "string"
-                ? candidate.id
-                : null;
-    const characterId =
-        typeof candidate.character_id === "string" ? candidate.character_id : null;
-    const userId = typeof candidate.user_id === "string" ? candidate.user_id : null;
-    const name = typeof candidate.name === "string" ? candidate.name : null;
 
-    if (!participantId && !characterId && !userId && !name) {
-        return null;
-    }
 
-    return {
-        participant_id: participantId,
-        character_id: characterId,
-        user_id: userId,
-        name,
-    };
-}
 
-function normalizeCombatEventResolution(value: unknown): CombatEventResolution {
-    if (!value || typeof value !== "object" || Array.isArray(value)) {
-        return null;
-    }
 
-    const record = value as Record<string, unknown>;
-
-    const damage_applied =
-        record.damage_applied &&
-            typeof record.damage_applied === "object" &&
-            !Array.isArray(record.damage_applied)
-            ? (() => {
-                const raw = record.damage_applied as Record<string, unknown>;
-                const target = toParticipantReference(raw.target);
-
-                if (!target || typeof raw.amount !== "number") {
-                    return null;
-                }
-
-                return {
-                    actor: toParticipantReference(raw.actor),
-                    target,
-                    amount: raw.amount,
-                    damage_type:
-                        typeof raw.damage_type === "string"
-                            ? raw.damage_type
-                            : null,
-                    summary:
-                        typeof raw.summary === "string" ? raw.summary : null,
-                };
-            })()
-            : null;
-
-    const healing_applied =
-        record.healing_applied &&
-            typeof record.healing_applied === "object" &&
-            !Array.isArray(record.healing_applied)
-            ? (() => {
-                const raw = record.healing_applied as Record<string, unknown>;
-                const target = toParticipantReference(raw.target);
-
-                if (!target || typeof raw.amount !== "number") {
-                    return null;
-                }
-
-                return {
-                    actor: toParticipantReference(raw.actor),
-                    target,
-                    amount: raw.amount,
-                    summary:
-                        typeof raw.summary === "string" ? raw.summary : null,
-                };
-            })()
-            : null;
-
-    const condition_applied =
-        record.condition_applied &&
-            typeof record.condition_applied === "object" &&
-            !Array.isArray(record.condition_applied)
-            ? (() => {
-                const raw = record.condition_applied as Record<string, unknown>;
-                const target = toParticipantReference(raw.target);
-
-                if (
-                    !target ||
-                    typeof raw.condition_name !== "string" ||
-                    raw.condition_name.trim().length === 0
-                ) {
-                    return null;
-                }
-
-                return {
-                    actor: toParticipantReference(raw.actor),
-                    target,
-                    condition_name: raw.condition_name,
-                    duration_rounds:
-                        typeof raw.duration_rounds === "number"
-                            ? raw.duration_rounds
-                            : null,
-                    source:
-                        typeof raw.source === "string" ? raw.source : null,
-                    summary:
-                        typeof raw.summary === "string" ? raw.summary : null,
-                };
-            })()
-            : null;
-
-    const condition_removed =
-        record.condition_removed &&
-            typeof record.condition_removed === "object" &&
-            !Array.isArray(record.condition_removed)
-            ? (() => {
-                const raw = record.condition_removed as Record<string, unknown>;
-                const target = toParticipantReference(raw.target);
-
-                if (
-                    !target ||
-                    typeof raw.condition_name !== "string" ||
-                    raw.condition_name.trim().length === 0
-                ) {
-                    return null;
-                }
-
-                return {
-                    actor: toParticipantReference(raw.actor),
-                    target,
-                    condition_name: raw.condition_name,
-                    summary:
-                        typeof raw.summary === "string" ? raw.summary : null,
-                };
-            })()
-            : null;
-
-    const combat_ended =
-        record.combat_ended &&
-            typeof record.combat_ended === "object" &&
-            !Array.isArray(record.combat_ended)
-            ? (() => {
-                const raw = record.combat_ended as Record<string, unknown>;
-                const winner_side = (
-                    raw.winner_side === "players" ||
-                    raw.winner_side === "enemies" ||
-                    raw.winner_side === "none" ||
-                    raw.winner_side === "unknown"
-                ) ? (raw.winner_side as "players" | "enemies" | "none" | "unknown") : null;
-
-                return {
-                    winner_side,
-                    reason:
-                        typeof raw.reason === "string" ? raw.reason : null,
-                    summary:
-                        typeof raw.summary === "string" ? raw.summary : null,
-                };
-            })()
-            : null;
-
-    if (
-        !damage_applied &&
-        !healing_applied &&
-        !condition_applied &&
-        !condition_removed &&
-        !combat_ended
-    ) {
-        return null;
-    }
-
-    return {
-        damage_applied,
-        healing_applied,
-        condition_applied,
-        condition_removed,
-        combat_ended,
-    };
-}
-
-function normalizeDiceRollRequired(value: MaybeDiceRollRequired): JsonObject | null {
-    if (!value || !value.needed) return null;
-
-    return {
-        needed: true,
-        stat: value.stat ?? null,
-        skill: value.skill ?? null,
-        dc: typeof value.dc === "number" ? value.dc : null,
-        reason: value.reason ?? null,
-    };
-}
 
 function hasMatchingClientEvent(
     events: NarrativeEventRow[],
@@ -678,6 +359,7 @@ async function persistInboundNarrativeEvent(params: {
     normalizedSessionId: string | null;
     normalizedClientEventId: string;
     parsedDiceResult: DiceRollOutcome | null;
+    channel: "adventure" | "group";
 }): Promise<"ok" | "duplicate"> {
     const {
         repository,
@@ -686,6 +368,7 @@ async function persistInboundNarrativeEvent(params: {
         normalizedSessionId,
         normalizedClientEventId,
         parsedDiceResult,
+        channel,
     } = params;
 
     try {
@@ -697,12 +380,12 @@ async function persistInboundNarrativeEvent(params: {
                 content,
                 session_id: normalizedSessionId,
                 client_event_id: normalizedClientEventId,
-                event_type: "player_message",
-                payload: parsedDiceResult
-                    ? ({
-                        dice_result: parsedDiceResult,
-                    } as JsonObject)
-                    : null,
+                event_type: channel === "group" ? "group_message" : "player_message",
+                payload: ({
+                    sender_name: character.name,
+                    channel,
+                    ...(parsedDiceResult ? { dice_result: parsedDiceResult } : {}),
+                } as JsonObject),
                 dice_roll_required: null,
             },
         ]);
@@ -794,9 +477,6 @@ export async function readStreamResponse(response: Response): Promise<string> {
     return output;
 }
 
-async function readSseText(response: Response): Promise<string> {
-    return response.text();
-}
 
 export async function processEngineStream(params: {
     repository: EngineStreamRepository;
@@ -810,7 +490,7 @@ export async function processEngineStream(params: {
         return Response.json({ error: "No autorizado" }, { status: 401 });
     }
 
-    const { characterId, content, sessionId, clientEventId } = body;
+    const { characterId, content, sessionId, clientEventId, channel } = body;
 
     if (!characterId || !content) {
         return Response.json({ error: "Faltan parámetros" }, { status: 400 });
@@ -818,17 +498,26 @@ export async function processEngineStream(params: {
 
     const character = await repository.getCharacterWithWorld(characterId);
 
-    if (!character || character.user_id !== userId) {
-        return Response.json({ error: "Personaje no encontrado" }, { status: 404 });
+    if (!character) {
+        console.error('Character not found in repository:', characterId);
+        return Response.json({ error: "Personaje no encontrado" }, { status: 418 });
+    }
+
+    if (character.user_id !== userId) {
+        console.error('User ID mismatch:', { characterUserId: character.user_id, userId });
+        return Response.json({ error: "No autorizado (personaje)" }, { status: 418 });
     }
 
     const normalizedSessionId = sessionId ?? null;
     const normalizedClientEventId = clientEventId ?? randomUUID();
+    const normalizedChannel: "adventure" | "group" = channel === "group" ? "group" : "adventure";
     const parsedDiceResult = parseDiceResultMarker(content);
     const contentForModel = parsedDiceResult
         ? buildDiceResolutionPrompt(parsedDiceResult)
         : content;
 
+    console.log('Starting data fetching for stream...');
+    const start = Date.now();
     const [recentEvents, sessionPlayers, sessionCombatState, relevantRules] =
         await Promise.all([
             normalizedSessionId
@@ -842,6 +531,13 @@ export async function processEngineStream(params: {
                 : Promise.resolve(null),
             repository.searchRelevantRules(contentForModel),
         ]);
+    console.log(`Data fetching finished in ${Date.now() - start}ms`);
+    console.log('Results:', {
+        eventsCount: recentEvents.length,
+        playersCount: sessionPlayers.length,
+        hasCombatState: !!sessionCombatState,
+        rulesCount: relevantRules.length,
+    });
 
     const currentCombatState = currentCombatToPromptState(
         sessionCombatState,
@@ -859,6 +555,7 @@ export async function processEngineStream(params: {
         normalizedSessionId,
         normalizedClientEventId,
         parsedDiceResult,
+        channel: normalizedChannel,
     });
 
     if (persistedInboundEvent === "duplicate") {
@@ -998,7 +695,12 @@ export async function processEngineStream(params: {
                     diceRollRequired,
                     combatUpdate,
                     combatEventResolution,
-                } = parseModelResponse(fullResponse);
+                    validationErrors,
+                } = parseGmStructuredOutput(fullResponse);
+
+                if (validationErrors.length > 0) {
+                    console.warn("GM output contract validation issues:", validationErrors);
+                }
 
                 let newHp = character.hp_current ?? character.hp_max;
                 const inventory = safeArray(character.inventory).map((item) => ({
@@ -1033,7 +735,7 @@ export async function processEngineStream(params: {
                         client_event_id: assistantClientEventId,
                         event_type: "gm_message",
                         payload: null,
-                        dice_roll_required: normalizeDiceRollRequired(diceRollRequired),
+                        dice_roll_required: normalizeDiceRollRequestForEvent(diceRollRequired),
                     },
                 ]);
 

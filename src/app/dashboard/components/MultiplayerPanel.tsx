@@ -12,8 +12,8 @@ interface Session {
   status: string
   host_id: string
   max_players: number
-  worlds: { name: string; genre: string }
-  profiles: { username: string }
+  worlds: { name: string; genre: string } | null
+  profiles: { username: string } | null
 }
 interface Props {
   worlds: World[]
@@ -115,7 +115,7 @@ export default function MultiplayerPanel({ worlds, activeSessions, currentUserId
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-0.5">
-                    <span className="text-sm font-semibold text-parchment-200 truncate">{session.worlds.name}</span>
+                    <span className="text-sm font-semibold text-parchment-200 truncate">{session.worlds?.name || 'Mundo sin nombre'}</span>
                     {session.host_id === currentUserId && (
                       <Crown className="w-3 h-3 text-amber-400 shrink-0" aria-label="Eres el host" />
                     )}
@@ -127,7 +127,7 @@ export default function MultiplayerPanel({ worlds, activeSessions, currentUserId
                     <span className="text-xs text-foreground/40 font-mono">{session.invite_code}</span>
                   </div>
                   <p className="text-xs text-foreground/30 mt-1 truncate">
-                    Host: {session.profiles?.username}
+                    Host: {session.profiles?.username || 'Desconocido'}
                   </p>
                 </div>
                 <ChevronRight className="w-4 h-4 text-foreground/20 group-hover:text-violet-400 transition-colors shrink-0 mt-1" />

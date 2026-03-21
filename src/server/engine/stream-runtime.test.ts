@@ -1114,3 +1114,100 @@ test("stream runtime emits model errors through SSE payload", async () => {
     const bodyText = await readStreamResponse(response);
     assert.match(bodyText, /Fallo del modelo/);
 });
+
+test("stream runtime discards invalid structured mechanics while preserving valid narrative", async () => {
+    const repository = new FakeEngineStreamRepository({
+        character: buildCharacter(),
+        sessionPlayers: buildSessionPlayers(),
+        sessionCombatState: buildActiveCombatState(),
+    });
+
+    const modelGateway = createModelGatewayFromText(
+        JSON.stringify({
+            narrative_response: "El veneno roza la hoja, pero la estocada no alcanza a consolidarse.",
+            state_changes: {
+                hp_delta: "mucho daño",
+                inventory_added: ["Colmillo roto"],
+                inventory_removed: [],
+            },
+            dice_roll_required: {
+                needed: true,
+                stat: null,
+                dc: "difícil",
+                reason: "Forzar una cerradura",
+            },
+            combat: null,
+            combat_events: {
+                damage_applied: {
+                    target: {
+                        participant_id: "player:user-1",
+                        character_id: "char-1",
+                        name: "Kael",
+                    },
+                    amount: "6",
+                    summary: "No debería persistirse por contrato inválido.",
+                },
+            },
+        }),
+    );
+
+    const response = await processEngineStream({
+        repository,
+        modelGateway,
+        userId: "user-1",
+        body: {
+            characterId: "char-1",
+            content: "Fuerzo la cerradura bajo presión.",
+            sessionId: "session-1",
+            clientEventId: "client-invalid-structured-1",
+        },
+    });
+
+    assert.equal(response.status, 200);
+
+    const bodyText = await readStreamResponse(response);
+    assert.match(bodyText, /"done":true/);
+
+    assert.equal(repository.narrativeEvents.length, 2);
+    assert.equal(repository.narrativeEvents[1].content, "El veneno roza la hoja, pero la estocada no alcanza a consolidarse.");
+    assert.equal(repository.narrativeEvents[1].dice_roll_required, null);
+    assert.equal(repository.tacticalRows.length, 0);
+});
+
+test("stream runtime falls back to narrative-only mode when model returns non-json text", async () => {
+    const repository = new FakeEngineStreamRepository({
+        character: buildCharacter(),
+    });
+
+    const modelGateway = createModelGatewayFromText(
+        "La niebla se abre ante Kael y un campanario roto emerge entre las ruinas.",
+    );
+
+    const response = await processEngineStream({
+        repository,
+        modelGateway,
+        userId: "user-1",
+        body: {
+            characterId: "char-1",
+            content: "Avanzo entre la niebla.",
+            clientEventId: "client-non-json-1",
+        },
+    });
+
+    assert.equal(response.status, 200);
+
+    const bodyText = await readStreamResponse(response);
+    assert.match(bodyText, /"done":true/);
+
+    assert.equal(repository.narrativeEvents.length, 2);
+    assert.equal(
+        repository.narrativeEvents[1].content,
+        "La niebla se abre ante Kael y un campanario roto emerge entre las ruinas.",
+    );
+    assert.equal(repository.narrativeEvents[1].dice_roll_required, null);
+    assert.equal(repository.characterUpdates.length, 1);
+    assert.deepEqual(repository.characterUpdates[0].patch, {
+        hp_current: 20,
+        inventory: [{ name: "Espada larga", type: "weapon" }],
+    });
+});
