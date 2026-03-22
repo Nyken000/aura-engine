@@ -279,18 +279,32 @@ export type SessionCombatState = {
 }
 
 export type SessionPlayer = {
-  user_id: string
-  profiles?: {
-    username?: string | null
-  } | null
-  characters?: {
-    id: string
-    name: string
-    hp_current: number
-    hp_max: number
-    stats?: CharacterStats | null
-    inventory?: InventoryItem[] | null
-  } | null
+    user_id: string
+    character_id?: string | null
+    selected_character_name?: string | null
+    selected_character_stats?: CharacterStats | null
+    selected_character_hp_current?: number | null
+    selected_character_hp_max?: number | null
+    profiles?: {
+        username?: string | null
+    } | {
+        username?: string | null
+    }[] | null
+    characters?: {
+        id: string
+        name: string
+        hp_current: number
+        hp_max: number
+        stats?: CharacterStats | null
+        inventory?: InventoryItem[] | null
+    } | {
+        id: string
+        name: string
+        hp_current: number
+        hp_max: number
+        stats?: CharacterStats | null
+        inventory?: InventoryItem[] | null
+    }[] | null
 }
 
 export type SidebarCompanion = {

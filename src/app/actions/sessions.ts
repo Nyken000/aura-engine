@@ -8,6 +8,8 @@ import {
 import { persistSessionCombatTransition } from '@/server/combat/session-combat-transitions'
 import type { SessionCombatStateRecord } from '@/types/session-combat'
 import { createClient } from '@/utils/supabase/server'
+import type { SupabaseClient } from '@supabase/supabase-js'
+import type { CharacterStats } from '@/utils/session/session-player'
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 
@@ -18,6 +20,86 @@ type SessionPlayerRow = {
 type SessionRouteRecord = {
   id: string
   invite_code: string
+  world_id: string
+}
+
+type CharacterSelectionRecord = {
+  id: string
+  world_id: string | null
+  name: string
+  stats: CharacterStats | null
+  hp_current: number | null
+  hp_max: number | null
+}
+
+type SessionPlayerCharacterSnapshot = {
+  character_id: string | null
+  selected_character_name: string | null
+  selected_character_stats: CharacterStats | null
+  selected_character_hp_current: number | null
+  selected_character_hp_max: number | null
+}
+
+function buildSessionPlayerCharacterSnapshot(
+  character: CharacterSelectionRecord | null,
+): SessionPlayerCharacterSnapshot {
+  if (!character) {
+    return {
+      character_id: null,
+      selected_character_name: null,
+      selected_character_stats: null,
+      selected_character_hp_current: null,
+      selected_character_hp_max: null,
+    }
+  }
+
+  return {
+    character_id: character.id,
+    selected_character_name: character.name,
+    selected_character_stats: character.stats ?? null,
+    selected_character_hp_current: character.hp_current ?? null,
+    selected_character_hp_max: character.hp_max ?? null,
+  }
+}
+
+async function loadOwnedCharacterForSession(
+  params: {
+    supabase: SupabaseClient
+    userId: string
+    sessionId: string
+    characterId: string | null
+  },
+): Promise<CharacterSelectionRecord | null> {
+  const { supabase, userId, sessionId, characterId } = params
+
+  if (!characterId) {
+    return null
+  }
+
+  const { data: session } = await supabase
+    .from('game_sessions')
+    .select('id, invite_code, world_id')
+    .eq('id', sessionId)
+    .single()
+
+  const typedSession = (session as SessionRouteRecord | null) ?? null
+  if (!typedSession) throw new Error('Sesión no encontrada')
+
+  const { data: character } = await supabase
+    .from('characters')
+    .select('id, world_id, name, stats, hp_current, hp_max')
+    .eq('id', characterId)
+    .eq('user_id', userId)
+    .single()
+
+  const typedCharacter = (character as CharacterSelectionRecord | null) ?? null
+  if (!typedCharacter) throw new Error('Personaje no encontrado')
+
+  if (!typedCharacter.world_id || typedCharacter.world_id !== typedSession.world_id) {
+    throw new Error('El personaje debe pertenecer al mismo mundo que la sesión')
+  }
+
+  return typedCharacter
 }
 
 export async function createGameSession(formData: FormData) {
@@ -69,48 +151,69 @@ export async function joinGameSession(formData: FormData) {
 
   const { data: session, error: sessErr } = await supabase
     .from('game_sessions')
-    .select('id, status, max_players, invite_code')
+    .select('id, status, max_players, invite_code, world_id')
     .eq('invite_code', inviteCode)
     .single()
 
-  if (sessErr || !session) throw new Error('Código de invitación inválido o sesión no encontrada')
-  if (session.status === 'ended') throw new Error('Esta sesión ya ha terminado')
+  const typedSession = (session as SessionRouteRecord & { status: string; max_players: number } | null) ?? null
+
+  if (sessErr || !typedSession) throw new Error('Código de invitación inválido o sesión no encontrada')
+  if (typedSession.status === 'ended') throw new Error('Esta sesión ya ha terminado')
+
+  const selectedCharacter = await loadOwnedCharacterForSession({
+    supabase,
+    userId: user.id,
+    sessionId: typedSession.id,
+    characterId,
+  })
+  const snapshot = buildSessionPlayerCharacterSnapshot(selectedCharacter)
 
   const { count } = await supabase
     .from('session_players')
     .select('*', { count: 'exact', head: true })
-    .eq('session_id', session.id)
+    .eq('session_id', typedSession.id)
     .eq('status', 'joined')
 
-  if ((count ?? 0) >= session.max_players) throw new Error('La sesión está llena')
+  if ((count ?? 0) >= typedSession.max_players) throw new Error('La sesión está llena')
 
   const { data: existing } = await supabase
     .from('session_players')
     .select('id')
-    .eq('session_id', session.id)
+    .eq('session_id', typedSession.id)
     .eq('user_id', user.id)
     .single()
 
   if (existing) {
-    await supabase
+    const { error } = await supabase
       .from('session_players')
-      .update({ status: 'joined', character_id: characterId })
+      .update({
+        status: 'joined',
+        ...snapshot,
+      })
       .eq('id', existing.id)
+
+    if (error) {
+      throw new Error(`No se pudo actualizar la entrada del jugador: ${error.message}`)
+    }
   } else {
-    await supabase.from('session_players').insert({
-      session_id: session.id,
+    const { error } = await supabase.from('session_players').insert({
+      session_id: typedSession.id,
       user_id: user.id,
-      character_id: characterId,
       status: 'joined',
+      ...snapshot,
     })
+
+    if (error) {
+      throw new Error(`No se pudo crear la entrada del jugador: ${error.message}`)
+    }
   }
 
-  await supabase.from('session_combat_states').upsert(createEmptySessionCombatState(session.id), {
+  await supabase.from('session_combat_states').upsert(createEmptySessionCombatState(typedSession.id), {
     onConflict: 'session_id',
   })
 
-  revalidatePath(`/session/${session.invite_code}`)
-  redirect(`/session/${session.invite_code}`)
+  revalidatePath(`/session/${typedSession.invite_code}`)
+  redirect(`/session/${typedSession.invite_code}`)
 }
 
 export async function selectCharacterForSession(sessionId: string, characterId: string) {
@@ -121,18 +224,17 @@ export async function selectCharacterForSession(sessionId: string, characterId: 
 
   if (!user) throw new Error('No autorizado')
 
-  const { data: character } = await supabase
-    .from('characters')
-    .select('id, world_id')
-    .eq('id', characterId)
-    .eq('user_id', user.id)
-    .single()
-
-  if (!character) throw new Error('Personaje no encontrado')
+  const selectedCharacter = await loadOwnedCharacterForSession({
+    supabase,
+    userId: user.id,
+    sessionId,
+    characterId,
+  })
+  const snapshot = buildSessionPlayerCharacterSnapshot(selectedCharacter)
 
   const { data: session } = await supabase
     .from('game_sessions')
-    .select('id, invite_code')
+    .select('id, invite_code, world_id')
     .eq('id', sessionId)
     .single()
 
@@ -150,8 +252,8 @@ export async function selectCharacterForSession(sessionId: string, characterId: 
     const { error } = await supabase
       .from('session_players')
       .update({
-        character_id: characterId,
         status: 'joined',
+        ...snapshot,
       })
       .eq('id', membership.id)
 
@@ -162,8 +264,8 @@ export async function selectCharacterForSession(sessionId: string, characterId: 
     const { error } = await supabase.from('session_players').insert({
       session_id: sessionId,
       user_id: user.id,
-      character_id: characterId,
       status: 'joined',
+      ...snapshot,
     })
 
     if (error) {

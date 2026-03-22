@@ -29,6 +29,7 @@ import type {
   WorldData,
 } from '../types'
 import { GameAccordionSection } from './GameAccordionSection'
+import { resolveSessionPlayerCharacter } from '@/utils/session/session-player'
 
 function sortNarrativeEvents(events: NarrativeEvent[]) {
   return [...events].sort((a, b) => {
@@ -651,9 +652,9 @@ export function GameSessionSidebar({
                           key={player.user_id}
                           className="relative flex h-6 w-6 items-center justify-center rounded-full border border-stone-800 bg-stone-950 shadow-sm"
                         >
-                          <span className="z-10 text-[9px] uppercase tracking-wider text-stone-500">
-                            {player.profiles?.username?.slice(0, 2) || player.characters?.name?.slice(0, 2) || '?'}
-                          </span>
+                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-emerald-900/30 bg-emerald-950/20 text-[10px] font-bold text-emerald-400 shadow-inner">
+                            {getPlayerUsername(player)?.slice(0, 2) || '?'}
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -673,6 +674,7 @@ export function GameSessionSidebar({
 
               {partyPlayers.map((player) => {
                 const isMe = player.user_id === currentUserId
+                const selectedCharacter = getSelectedPlayerCharacter(player)
 
                 return (
                   <div
@@ -681,7 +683,7 @@ export function GameSessionSidebar({
                   >
                     <div className="min-w-0 flex-1">
                       <div className="truncate font-serif text-[13px] tracking-wide text-stone-300">
-                        {player.characters?.name || 'Aventurero Desconocido'}
+                        {selectedCharacter?.name || 'Aventurero Desconocido'}
                         {isMe ? (
                           <span className="ml-2 text-[10px] uppercase tracking-widest text-amber-600 opacity-80">
                             (Tú)
@@ -690,14 +692,12 @@ export function GameSessionSidebar({
                       </div>
 
                       <div className="mt-1 truncate text-[10px] uppercase tracking-widest text-stone-500">
-                        Ju: {player.profiles?.username || 'Desconocido'}
+                        Ju: {getPlayerUsername(player) || 'Desconocido'}
                       </div>
                     </div>
 
-                    <div className="ml-3 flex h-8 w-8 shrink-0 items-center justify-center rounded border border-stone-800 bg-stone-950">
-                      <span className="font-serif text-xs text-stone-500">
-                        {player.characters?.name?.charAt(0) || '?'}
-                      </span>
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-blue-900/30 bg-blue-950/20 text-[10px] font-bold text-blue-400 shadow-inner">
+                      {getPlayerUsername(player)?.slice(0, 2) || '?'}
                     </div>
                   </div>
                 )
@@ -844,4 +844,22 @@ export function GameSessionSidebar({
       </div>
     </aside>
   )
+}
+
+function getPlayerUsername(player: SessionPlayer) {
+  const profile = Array.isArray(player.profiles) ? player.profiles[0] : player.profiles
+  return profile?.username || null
+}
+
+function getSelectedPlayerCharacter(player: SessionPlayer) {
+  const character = Array.isArray(player.characters) ? player.characters[0] : player.characters
+
+  return resolveSessionPlayerCharacter({
+    character_id: player.character_id ?? null,
+    selected_character_name: player.selected_character_name ?? null,
+    selected_character_stats: player.selected_character_stats ?? null,
+    selected_character_hp_current: player.selected_character_hp_current ?? null,
+    selected_character_hp_max: player.selected_character_hp_max ?? null,
+    characters: character ?? null,
+  })
 }

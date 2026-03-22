@@ -184,21 +184,16 @@ export default async function PlayPage({
     const { data: players } = await supabase
       .from('session_players')
       .select(
-        '*, profiles!user_id(id, username, avatar_url), characters(id, name, stats, hp_current, hp_max)',
+        'id, user_id, status, character_id, selected_character_name, selected_character_stats, selected_character_hp_current, selected_character_hp_max, profiles!user_id(id, username, avatar_url), characters(id, name, stats, hp_current, hp_max)',
       )
       .eq('session_id', sessionId)
       .eq('status', 'joined')
       .order('joined_at', { ascending: true })
 
-    sessionPlayers = ((players ?? []) as Array<
-      Omit<SessionPlayerRecord, 'profiles' | 'characters'> & {
-        profiles?: SessionPlayerProfileRecord | SessionPlayerProfileRecord[] | null
-        characters?: SessionPlayerCharacterRecord | SessionPlayerCharacterRecord[] | null
-      }
-    >).map((player) => ({
+    sessionPlayers = (((players as unknown as SessionPlayerRecord[] | null) ?? [])).map((player) => ({
       ...player,
-      profiles: Array.isArray(player.profiles) ? player.profiles[0] ?? null : (player.profiles ?? null),
-      characters: Array.isArray(player.characters) ? player.characters[0] ?? null : (player.characters ?? null),
+      profiles: Array.isArray(player.profiles) ? player.profiles[0] : player.profiles,
+      characters: Array.isArray(player.characters) ? player.characters[0] : player.characters,
     }))
 
     const { data: combat } = await supabase

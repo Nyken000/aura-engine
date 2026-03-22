@@ -23,17 +23,20 @@ import {
   endGameSession,
 } from '@/app/actions/sessions'
 
-type CharacterStats = {
-  class?: string
-  race?: string
-  [key: string]: unknown
-}
+import {
+  resolveSessionPlayerCharacter,
+  type CharacterStats,
+} from '@/utils/session/session-player'
 
 interface SessionPlayer {
   id: string
   user_id: string
   character_id: string | null
   status: string
+  selected_character_name: string | null
+  selected_character_stats: CharacterStats | null
+  selected_character_hp_current?: number | null
+  selected_character_hp_max?: number | null
   profiles: { id: string; username: string; avatar_url: string | null }
   characters: { id: string; name: string; stats: CharacterStats } | null
 }
@@ -120,7 +123,9 @@ export default function SessionLobbyClient({
   const refreshPlayers = useCallback(async () => {
     const { data, error } = await supabase
       .from('session_players')
-      .select('*, profiles!user_id(id, username, avatar_url), characters(id, name, stats)')
+      .select(
+        'id, user_id, character_id, status, joined_at, selected_character_name, selected_character_stats, selected_character_hp_current, selected_character_hp_max, profiles!user_id(id, username, avatar_url), characters(id, name, stats)',
+      )
       .eq('session_id', session.id)
       .eq('status', 'joined')
       .order('joined_at', { ascending: true })
@@ -130,7 +135,11 @@ export default function SessionLobbyClient({
       return
     }
 
-    const nextPlayers = ((data as SessionPlayer[] | null) ?? []).filter((p) => p !== null)
+    const nextPlayers = ((data as unknown as SessionPlayer[] | null) ?? []).map((player) => ({
+      ...player,
+      profiles: Array.isArray(player.profiles) ? player.profiles[0] : player.profiles,
+      characters: Array.isArray(player.characters) ? player.characters[0] : player.characters,
+    }))
     setPlayers(nextPlayers)
 
     const mine = nextPlayers.find((player) => player.user_id === currentUser.id) ?? null
@@ -285,6 +294,10 @@ export default function SessionLobbyClient({
             ? {
               ...player,
               character_id: characterId,
+              selected_character_name: selectedCharacter.name,
+              selected_character_stats: selectedCharacter.stats,
+              selected_character_hp_current: null,
+              selected_character_hp_max: null,
               characters: {
                 id: selectedCharacter.id,
                 name: selectedCharacter.name,
@@ -300,6 +313,10 @@ export default function SessionLobbyClient({
           ? {
             ...prev,
             character_id: characterId,
+            selected_character_name: selectedCharacter.name,
+            selected_character_stats: selectedCharacter.stats,
+            selected_character_hp_current: null,
+            selected_character_hp_max: null,
             characters: {
               id: selectedCharacter.id,
               name: selectedCharacter.name,
@@ -404,17 +421,23 @@ export default function SessionLobbyClient({
                       </span>
                     </div>
 
-                    {player.characters ? (
-                      <div className="flex items-center gap-2 mt-0.5">
-                        <span className="text-base">{getClassIcon(player.characters.stats)}</span>
-                        <span className="text-xs text-amber-400">{player.characters.name}</span>
-                        <span className="text-xs text-stone-500">
-                          {player.characters.stats?.race} {player.characters.stats?.class}
-                        </span>
-                      </div>
-                    ) : (
-                      <p className="text-xs text-stone-500 mt-0.5 italic">Sin personaje elegido...</p>
-                    )}
+                    {(() => {
+                      const selectedCharacter = resolveSessionPlayerCharacter(player)
+
+                      if (!selectedCharacter) {
+                        return <p className="text-xs text-stone-500 mt-0.5 italic">Sin personaje elegido...</p>
+                      }
+
+                      return (
+                        <div className="flex items-center gap-2 mt-0.5">
+                          <span className="text-base">{getClassIcon(selectedCharacter.stats ?? undefined)}</span>
+                          <span className="text-xs text-amber-400">{selectedCharacter.name}</span>
+                          <span className="text-xs text-stone-500">
+                            {selectedCharacter.stats?.race} {selectedCharacter.stats?.class}
+                          </span>
+                        </div>
+                      )
+                    })()}
                   </div>
 
                   {isHost && player.user_id !== currentUser.id && session.status === 'lobby' && (

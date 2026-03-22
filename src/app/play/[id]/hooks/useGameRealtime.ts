@@ -139,8 +139,8 @@ export function useGameRealtime({
         const { data, error } = await supabase
             .from('session_players')
             .select(
-                '*, profiles!user_id(id, username, avatar_url), characters(id, name, stats, hp_current, hp_max)',
-            )
+        'id, user_id, status, character_id, selected_character_name, selected_character_stats, selected_character_hp_current, selected_character_hp_max, profiles!user_id(id, username, avatar_url), characters(id, name, stats, hp_current, hp_max)',
+      )
             .eq('session_id', sessionId)
             .eq('status', 'joined')
             .order('joined_at', { ascending: true })
@@ -151,7 +151,11 @@ export function useGameRealtime({
             return
         }
 
-        setActiveSessionPlayers((data as SessionPlayer[] | null) ?? [])
+        setActiveSessionPlayers((((data as unknown as SessionPlayer[] | null) ?? [])).map((player) => ({
+          ...player,
+          profiles: Array.isArray(player.profiles) ? player.profiles[0] : player.profiles,
+          characters: Array.isArray(player.characters) ? player.characters[0] : player.characters,
+        })))
     }, [sessionId, supabase, router])
 
     const refreshSessionQuests = useCallback(async () => {
@@ -403,7 +407,16 @@ export function useGameRealtime({
                     void refreshSessionCompanions()
                 },
             )
-            .subscribe()
+            .subscribe((status) => {
+                if (status === 'SUBSCRIBED') {
+                    console.info(`Realtime subscribed: game:${sessionId}`)
+                    return
+                }
+
+                if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+                    console.warn(`Realtime status for game:${sessionId}:`, status)
+                }
+            })
 
         return () => {
             void supabase.removeChannel(channel)
