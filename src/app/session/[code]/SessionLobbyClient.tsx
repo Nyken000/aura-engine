@@ -130,7 +130,7 @@ export default function SessionLobbyClient({
       return
     }
 
-    const nextPlayers = (data as SessionPlayer[] | null) ?? []
+    const nextPlayers = ((data as SessionPlayer[] | null) ?? []).filter((p) => p !== null)
     setPlayers(nextPlayers)
 
     const mine = nextPlayers.find((player) => player.user_id === currentUser.id) ?? null
@@ -141,7 +141,7 @@ export default function SessionLobbyClient({
   const refreshSession = useCallback(async () => {
     const { data, error } = await supabase
       .from('game_sessions')
-      .select('id, invite_code, status, host_id, max_players, turn_player_id, worlds(*), profiles(*)')
+      .select('id, invite_code, status, host_id, max_players, turn_player_id, worlds(*), profiles!host_id(*)')
       .eq('id', session.id)
       .single()
 
@@ -373,7 +373,7 @@ export default function SessionLobbyClient({
           </div>
 
           <div className="space-y-3">
-            {players.map((player) => (
+            {players.filter((p) => p !== null).map((player) => (
               <div
                 key={player.id}
                 className={`relative border rounded-xl p-4 transition-all ${player.user_id === currentUser.id
@@ -475,7 +475,7 @@ export default function SessionLobbyClient({
               </h3>
 
               <div className="space-y-2">
-                {myCharacters.map((character) => (
+                {myCharacters.filter((c) => c !== null).map((character) => (
                   <button
                     key={character.id}
                     onClick={() => handleSelectCharacter(character.id)}

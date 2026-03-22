@@ -93,7 +93,7 @@ function getErrorMessage(error: unknown, fallback: string) {
 }
 
 export async function createCharacter(formData: FormData) {
-  const supabase = createClient()
+  const supabase = await createClient()
 
   const {
     data: { user },
@@ -306,7 +306,7 @@ export async function aiGenerateBackstory(_prevState: unknown, formData: FormDat
   }
 
   try {
-    const supabase = createClient()
+    const supabase = await createClient()
     let world: WorldRecord | undefined
 
     if (world_id) {
@@ -330,7 +330,7 @@ export async function aiAnalyzeStory(_prevState: unknown, formData: FormData): P
   }
 
   try {
-    const supabase = createClient()
+    const supabase = await createClient()
     let world: WorldRecord | undefined
 
     if (world_id) {

@@ -76,7 +76,7 @@ export function reconcileRuntimeSnapshot(
     }
 }
 
-export function beginAssistantStream(state: GameClientRuntimeState): GameClientRuntimeState {
+export function prepareAssistantStream(state: GameClientRuntimeState): GameClientRuntimeState {
     return {
         ...state,
         isTyping: true,
@@ -159,4 +159,30 @@ export function consumeAssistantStreamChunk(
         refreshRequested,
         systemOnly,
     }
+}
+
+export async function beginAssistantStream({
+    characterId,
+    sessionId,
+    message,
+    clientEventId,
+    assistantClientEventId,
+}: {
+    characterId: string
+    sessionId?: string | null
+    message: string
+    clientEventId?: string
+    assistantClientEventId?: string
+}) {
+    return fetch('/api/engine/stream', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            characterId,
+            sessionId,
+            message,
+            clientEventId,
+            assistantClientEventId,
+        }),
+    })
 }

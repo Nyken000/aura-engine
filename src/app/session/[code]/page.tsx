@@ -2,8 +2,9 @@ import { createClient } from '@/utils/supabase/server'
 import { redirect } from 'next/navigation'
 import SessionLobbyClient from './SessionLobbyClient'
 
-export default async function SessionPage({ params }: { params: { code: string } }) {
-  const supabase = createClient()
+export default async function SessionPage({ params: paramsPromise }: { params: Promise<{ code: string }> }) {
+  const params = await paramsPromise
+  const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
 

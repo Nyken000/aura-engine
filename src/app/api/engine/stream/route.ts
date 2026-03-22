@@ -1,10 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
-import fs from 'node:fs'
-import path from 'node:path'
 import type { SupabaseClient } from '@supabase/supabase-js'
+
 import { streamAiText } from '@/lib/ai/provider'
-import { createClient } from '@/utils/supabase/server'
-import { searchRelevantRuleBookChunks } from '@/server/rag/rule-book-indexer'
+import type {
+  SessionCombatParticipant,
+  SessionCombatStateRecord,
+  SessionPlayerRow,
+} from '@/server/combat/session-combat'
+import { persistSessionCombatEvents } from '@/server/combat/session-combat-events'
+import { persistSessionCombatTransition } from '@/server/combat/session-combat-transitions'
 import {
   processEngineStream,
   type CharacterRecord,
@@ -15,17 +19,21 @@ import {
   type RuleMatchRecord,
 } from '@/server/engine/stream-runtime'
 import type {
-  SessionCombatParticipant,
-  SessionCombatStateRecord,
-  SessionPlayerRow,
-} from '@/server/combat/session-combat'
-import { persistSessionCombatTransition } from '@/server/combat/session-combat-transitions'
-import { persistSessionCombatEvents } from '@/server/combat/session-combat-events'
+  NarrativeSemanticPayload,
+  RelationshipDelta,
+} from '@/server/world/world-state-types'
+import { searchRelevantRuleBookChunks } from '@/server/rag/rule-book-indexer'
+import { getJoinedSessionMembership } from '@/server/sessions/session-access'
+import { createClient } from '@/utils/supabase/server'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 type CharacterRow = CharacterRecord
+
+function logStreamEvent(message: string, payload?: Record<string, unknown>) {
+  console.log('[engine/stream]', message, payload ?? {})
+}
 
 function createOllamaModelGateway(): EngineStreamModelGateway {
   return {
@@ -48,6 +56,14 @@ function createOllamaModelGateway(): EngineStreamModelGateway {
   }
 }
 
+function resolveRelationshipEventType(delta: RelationshipDelta) {
+  if ((delta.affinityDelta ?? 0) !== 0) return 'affinity_changed'
+  if ((delta.trustDelta ?? 0) !== 0) return 'trust_changed'
+  if ((delta.favorDebtDelta ?? 0) !== 0) return 'favor_changed'
+  if ((delta.hostilityDelta ?? 0) !== 0) return 'hostility_changed'
+  return 'relationship_note'
+}
+
 function createSupabaseEngineStreamRepository(
   supabase: SupabaseClient,
 ): EngineStreamRepository {
@@ -61,6 +77,10 @@ function createSupabaseEngineStreamRepository(
 
       if (error) return null
       return (data as CharacterRow | null) ?? null
+    },
+
+    async getJoinedSessionMembership(sessionId, userId) {
+      return getJoinedSessionMembership(supabase, sessionId, userId)
     },
 
     async getRecentSessionEvents(sessionId) {
@@ -127,20 +147,20 @@ function createSupabaseEngineStreamRepository(
     },
 
     async insertNarrativeEvents(rows) {
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from('narrative_events')
         .insert(rows as NarrativeEventInsert[])
+        .select('id')
 
       if (error) {
         throw new Error(`Error al insertar narrative_events: ${error.message}`)
       }
+
+      return data as { id: string }[]
     },
 
     async updateCharacter(characterId, patch) {
-      const { error } = await supabase
-        .from('characters')
-        .update(patch)
-        .eq('id', characterId)
+      const { error } = await supabase.from('characters').update(patch).eq('id', characterId)
 
       if (error) {
         throw new Error(`Error al actualizar character: ${error.message}`)
@@ -168,9 +188,7 @@ function createSupabaseEngineStreamRepository(
         .upsert(state, { onConflict: 'session_id' })
 
       if (error) {
-        throw new Error(
-          `Error al upsert de session_combat_states: ${error.message}`,
-        )
+        throw new Error(`Error al upsert de session_combat_states: ${error.message}`)
       }
     },
 
@@ -195,11 +213,183 @@ function createSupabaseEngineStreamRepository(
         actingParticipant: params.actingParticipant,
       })
     },
+
+    async persistNarrativeSemantic(params: {
+      sessionId: string
+      worldId?: string | null
+      characterId: string
+      sourceEventId: string
+      semantic: NarrativeSemanticPayload
+    }) {
+      const { sessionId, worldId, characterId, sourceEventId, semantic } = params
+
+      for (const quest of semantic.quests?.upserts ?? []) {
+        const { data, error } = await supabase
+          .from('session_quests')
+          .upsert(
+            {
+              session_id: sessionId,
+              world_id: worldId ?? null,
+              source_event_id: sourceEventId,
+              slug: quest.slug,
+              title: quest.title,
+              description: quest.description,
+              status: quest.status,
+              offered_by_npc_key: quest.offeredByNpcKey ?? null,
+              assigned_character_id: quest.assignedCharacterId ?? characterId,
+              objective_summary: quest.objectiveSummary ?? null,
+              reward_summary: quest.rewardSummary ?? null,
+              failure_consequence: quest.failureConsequence ?? null,
+              metadata: quest.metadata ?? {},
+            },
+            { onConflict: 'session_id,slug' },
+          )
+          .select('id, slug')
+          .single()
+
+        if (error) {
+          throw new Error(`Error al upsert de session_quests: ${error.message}`)
+        }
+
+        const matchingUpdates = (semantic.quests?.updates ?? []).filter(
+          (update) => update.slug === quest.slug,
+        )
+
+        for (const update of matchingUpdates) {
+          const { error: updateError } = await supabase.from('session_quest_updates').insert({
+            quest_id: data.id,
+            session_id: sessionId,
+            source_event_id: sourceEventId,
+            update_type: update.updateType,
+            title: update.title,
+            description: update.description,
+            payload: update.payload ?? {},
+          })
+
+          if (updateError) {
+            throw new Error(`Error al insertar session_quest_updates: ${updateError.message}`)
+          }
+        }
+      }
+
+      for (const delta of semantic.relationships ?? []) {
+        const { data: relationshipSeed, error: seedError } = await supabase
+          .from('npc_relationships')
+          .upsert(
+            {
+              session_id: sessionId,
+              world_id: worldId ?? null,
+              character_id: characterId,
+              npc_key: delta.npcKey,
+              npc_name: delta.npcName,
+              affinity: 0,
+              trust: 0,
+              favor_debt: 0,
+              hostility: 0,
+              last_change_reason: delta.reason,
+              metadata: delta.metadata ?? {},
+            },
+            {
+              onConflict: 'session_id,character_id,npc_key',
+            },
+          )
+          .select('id, affinity, trust, favor_debt, hostility')
+          .single()
+
+        if (seedError) {
+          throw new Error(`Error al upsert de npc_relationships: ${seedError.message}`)
+        }
+
+        const affinityDelta = delta.affinityDelta ?? 0
+        const trustDelta = delta.trustDelta ?? 0
+        const favorDebtDelta = delta.favorDebtDelta ?? 0
+        const hostilityDelta = delta.hostilityDelta ?? 0
+
+        const { error: updateError } = await supabase
+          .from('npc_relationships')
+          .update({
+            affinity: relationshipSeed.affinity + affinityDelta,
+            trust: relationshipSeed.trust + trustDelta,
+            favor_debt: relationshipSeed.favor_debt + favorDebtDelta,
+            hostility: relationshipSeed.hostility + hostilityDelta,
+            last_change_reason: delta.reason,
+            metadata: delta.metadata ?? {},
+          })
+          .eq('id', relationshipSeed.id)
+
+        if (updateError) {
+          throw new Error(`Error al actualizar npc_relationships: ${updateError.message}`)
+        }
+
+        const { error: eventError } = await supabase.from('npc_relationship_events').insert({
+          relationship_id: relationshipSeed.id,
+          session_id: sessionId,
+          character_id: characterId,
+          source_event_id: sourceEventId,
+          event_type: resolveRelationshipEventType(delta),
+          reason: delta.reason,
+          affinity_delta: affinityDelta,
+          trust_delta: trustDelta,
+          favor_debt_delta: favorDebtDelta,
+          hostility_delta: hostilityDelta,
+          payload: delta.metadata ?? {},
+        })
+
+        if (eventError) {
+          throw new Error(`Error al insertar npc_relationship_events: ${eventError.message}`)
+        }
+      }
+
+      for (const companion of semantic.companions ?? []) {
+        const { data: companionRecord, error: companionError } = await supabase
+          .from('session_companions')
+          .upsert(
+            {
+              session_id: sessionId,
+              world_id: worldId ?? null,
+              source_event_id: sourceEventId,
+              npc_key: companion.npcKey,
+              npc_name: companion.npcName,
+              status: companion.action,
+              joined_by_character_id: characterId,
+              last_change_reason: companion.reason ?? null,
+              metadata: companion.metadata ?? {},
+            },
+            {
+              onConflict: 'session_id,npc_key',
+            },
+          )
+          .select('id')
+          .single()
+
+        if (companionError) {
+          throw new Error(`Error al upsert de session_companions: ${companionError.message}`)
+        }
+
+        const { error: companionEventError } = await supabase
+          .from('session_companion_events')
+          .insert({
+            companion_id: companionRecord.id,
+            session_id: sessionId,
+            source_event_id: sourceEventId,
+            actor_character_id: characterId,
+            event_type: companion.action,
+            reason: companion.reason ?? 'Cambio de estado del acompañante.',
+            payload: companion.metadata ?? {},
+          })
+
+        if (companionEventError) {
+          throw new Error(
+            `Error al insertar session_companion_events: ${companionEventError.message}`,
+          )
+        }
+      }
+    },
   }
 }
 
 export async function POST(req: NextRequest) {
-  const supabase = createClient()
+  const supabase = await createClient()
   const {
     data: { user },
   } = await supabase.auth.getUser()
@@ -209,9 +399,8 @@ export async function POST(req: NextRequest) {
   }
 
   const body = await req.json()
-  const logFile = 'c:/proyectos/aura-engine/debug-log.txt'
-  fs.appendFileSync(logFile, `[${new RegExp().toString()}] Request: ${JSON.stringify({ userId: user.id, characterId: body.characterId, sessionId: body.sessionId })}\n`)
-  console.log('Stream API Request:', {
+
+  logStreamEvent('request', {
     userId: user.id,
     characterId: body.characterId,
     sessionId: body.sessionId,
@@ -219,14 +408,19 @@ export async function POST(req: NextRequest) {
   })
 
   const response = await processEngineStream({
-    repository: createSupabaseEngineStreamRepository(
-      supabase as unknown as SupabaseClient,
-    ),
+    repository: createSupabaseEngineStreamRepository(supabase as unknown as SupabaseClient),
     modelGateway: createOllamaModelGateway(),
     userId: user.id,
     body,
+    logger: logStreamEvent,
   })
 
-  fs.appendFileSync(logFile, `[${new RegExp().toString()}] Response Status: ${response.status}\n`)
+  logStreamEvent('response', {
+    userId: user.id,
+    characterId: body.characterId,
+    sessionId: body.sessionId,
+    status: response.status,
+  })
+
   return response
 }

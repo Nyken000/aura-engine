@@ -18,7 +18,7 @@ type RuleBookListItem = {
 }
 
 export async function uploadRuleBook(formData: FormData) {
-  const supabase = createClient()
+  const supabase = await createClient()
   const {
     data: { user },
   } = await supabase.auth.getUser()
@@ -90,7 +90,7 @@ export async function uploadRuleBook(formData: FormData) {
 }
 
 export async function deleteRuleBook(bookId: string) {
-  const supabase = createClient()
+  const supabase = await createClient()
 
   if (!(await isAdmin())) {
     return { error: 'Solo los administradores pueden eliminar manuales.' }
@@ -126,7 +126,7 @@ export async function deleteRuleBook(bookId: string) {
 }
 
 export async function getRuleBooks(): Promise<RuleBookListItem[]> {
-  const supabase = createClient()
+  const supabase = await createClient()
 
   if (!(await isAdmin())) return []
 

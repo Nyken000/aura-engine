@@ -5,7 +5,7 @@ import { redirect } from 'next/navigation'
 import { revalidatePath } from 'next/cache'
 
 export async function createWorld(formData: FormData) {
-  const supabase = createClient()
+  const supabase = await createClient()
   
   // Verify user is authenticated
   const { data: { user } } = await supabase.auth.getUser()

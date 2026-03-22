@@ -21,7 +21,7 @@ type SessionRouteRecord = {
 }
 
 export async function createGameSession(formData: FormData) {
-  const supabase = createClient()
+  const supabase = await createClient()
   const {
     data: { user },
   } = await supabase.auth.getUser()
@@ -55,7 +55,7 @@ export async function createGameSession(formData: FormData) {
 }
 
 export async function joinGameSession(formData: FormData) {
-  const supabase = createClient()
+  const supabase = await createClient()
   const {
     data: { user },
   } = await supabase.auth.getUser()
@@ -114,7 +114,7 @@ export async function joinGameSession(formData: FormData) {
 }
 
 export async function selectCharacterForSession(sessionId: string, characterId: string) {
-  const supabase = createClient()
+  const supabase = await createClient()
   const {
     data: { user },
   } = await supabase.auth.getUser()
@@ -176,7 +176,7 @@ export async function selectCharacterForSession(sessionId: string, characterId: 
 }
 
 export async function startGameSession(sessionId: string) {
-  const supabase = createClient()
+  const supabase = await createClient()
   const {
     data: { user },
   } = await supabase.auth.getUser()
@@ -230,7 +230,7 @@ export async function startGameSession(sessionId: string) {
 }
 
 export async function kickPlayerFromSession(sessionId: string, targetUserId: string) {
-  const supabase = createClient()
+  const supabase = await createClient()
   const {
     data: { user },
   } = await supabase.auth.getUser()
@@ -257,7 +257,7 @@ export async function kickPlayerFromSession(sessionId: string, targetUserId: str
 }
 
 export async function advanceTurn(sessionId: string) {
-  const supabase = createClient()
+  const supabase = await createClient()
 
   const { data: combatState } = await supabase
     .from('session_combat_states')
@@ -305,7 +305,7 @@ export async function advanceTurn(sessionId: string) {
 }
 
 export async function endGameSession(sessionId: string) {
-  const supabase = createClient()
+  const supabase = await createClient()
   const {
     data: { user },
   } = await supabase.auth.getUser()

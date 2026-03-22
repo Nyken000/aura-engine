@@ -20,12 +20,16 @@ import {
     updateSessionCombatStateFromModel,
 } from "@/server/combat/session-combat-service";
 import type { SessionCombatTransitionEvent } from "@/server/combat/session-combat-transitions";
+import type {
+    NarrativeSemanticPayload,
+} from "@/server/world/world-state-types";
 import {
     buildGmOutputFormatInstructions,
     normalizeDiceRollRequestForEvent,
     parseGmStructuredOutput,
     type CombatUpdate,
 } from "@/server/engine/gm-output-contract";
+import type { SessionAccessRecord } from "@/server/sessions/session-access";
 
 type CharacterInventoryItem = {
     name?: string;
@@ -129,14 +133,24 @@ export type PersistCombatEventsParams = {
     actingParticipant?: CombatParticipantReference | null;
 };
 
+export type PersistNarrativeSemanticParams = {
+    sessionId: string;
+    worldId?: string | null;
+    characterId: string;
+    sourceEventId: string;
+    semantic: NarrativeSemanticPayload;
+};
+
 export interface EngineStreamRepository {
     getCharacterWithWorld(characterId: string): Promise<CharacterRecord | null>;
+    getJoinedSessionMembership(sessionId: string, userId: string): Promise<SessionAccessRecord | null>;
     getRecentSessionEvents(sessionId: string): Promise<NarrativeEventRow[]>;
     getRecentCharacterEvents(characterId: string): Promise<NarrativeEventRow[]>;
     getSessionPlayers(sessionId: string): Promise<SessionPlayerRow[]>;
     getSessionCombatState(sessionId: string): Promise<SessionCombatStateRecord | null>;
     searchRelevantRules(content: string): Promise<RuleMatchRecord[]>;
-    insertNarrativeEvents(rows: NarrativeEventInsert[]): Promise<void>;
+    insertNarrativeEvents(rows: NarrativeEventInsert[]): Promise<{ id: string }[]>;
+    persistNarrativeSemantic(params: PersistNarrativeSemanticParams): Promise<void>;
     updateCharacter(characterId: string, patch: CharacterUpdatePatch): Promise<void>;
     updateSessionCombatParticipants(
         sessionId: string,
@@ -478,13 +492,16 @@ export async function readStreamResponse(response: Response): Promise<string> {
 }
 
 
+export type EngineStreamLogger = (message: string, payload?: Record<string, unknown>) => void;
+
 export async function processEngineStream(params: {
     repository: EngineStreamRepository;
     modelGateway: EngineStreamModelGateway;
     userId: string | null | undefined;
     body: StreamRequestBody;
+    logger?: EngineStreamLogger;
 }): Promise<Response> {
-    const { repository, modelGateway, userId, body } = params;
+    const { repository, modelGateway, userId, body, logger } = params;
 
     if (!userId) {
         return Response.json({ error: "No autorizado" }, { status: 401 });
@@ -499,24 +516,53 @@ export async function processEngineStream(params: {
     const character = await repository.getCharacterWithWorld(characterId);
 
     if (!character) {
-        console.error('Character not found in repository:', characterId);
+        logger?.('character_not_found', { characterId });
         return Response.json({ error: "Personaje no encontrado" }, { status: 418 });
     }
 
     if (character.user_id !== userId) {
-        console.error('User ID mismatch:', { characterUserId: character.user_id, userId });
+        logger?.('user_id_mismatch', { characterUserId: character.user_id, userId });
         return Response.json({ error: "No autorizado (personaje)" }, { status: 418 });
     }
 
     const normalizedSessionId = sessionId ?? null;
     const normalizedClientEventId = clientEventId ?? randomUUID();
     const normalizedChannel: "adventure" | "group" = channel === "group" ? "group" : "adventure";
+
+    if (normalizedChannel === "group" && !normalizedSessionId) {
+        return Response.json({ error: "El canal grupal requiere una sesión activa" }, { status: 400 });
+    }
+
+    let joinedSessionMembership: SessionAccessRecord | null = null;
+
+    if (normalizedSessionId) {
+        joinedSessionMembership = await repository.getJoinedSessionMembership(normalizedSessionId, userId);
+
+        if (!joinedSessionMembership) {
+            return Response.json({ error: "No autorizado para esta sesión" }, { status: 403 });
+        }
+
+        if (!joinedSessionMembership.character_id) {
+            return Response.json(
+                { error: "Debes seleccionar un personaje válido para esta sesión" },
+                { status: 409 },
+            );
+        }
+
+        if (joinedSessionMembership.character_id !== character.id) {
+            return Response.json(
+                { error: "El personaje activo no coincide con el personaje vinculado a la sesión" },
+                { status: 409 },
+            );
+        }
+    }
+
     const parsedDiceResult = parseDiceResultMarker(content);
     const contentForModel = parsedDiceResult
         ? buildDiceResolutionPrompt(parsedDiceResult)
         : content;
 
-    console.log('Starting data fetching for stream...');
+    logger?.('data_fetching_start');
     const start = Date.now();
     const [recentEvents, sessionPlayers, sessionCombatState, relevantRules] =
         await Promise.all([
@@ -531,12 +577,13 @@ export async function processEngineStream(params: {
                 : Promise.resolve(null),
             repository.searchRelevantRules(contentForModel),
         ]);
-    console.log(`Data fetching finished in ${Date.now() - start}ms`);
-    console.log('Results:', {
+    logger?.('data_fetching_end', {
+        durationMs: Date.now() - start,
         eventsCount: recentEvents.length,
         playersCount: sessionPlayers.length,
         hasCombatState: !!sessionCombatState,
         rulesCount: relevantRules.length,
+        sessionScoped: Boolean(joinedSessionMembership),
     });
 
     const currentCombatState = currentCombatToPromptState(
@@ -695,6 +742,7 @@ export async function processEngineStream(params: {
                     diceRollRequired,
                     combatUpdate,
                     combatEventResolution,
+                    semantic,
                     validationErrors,
                 } = parseGmStructuredOutput(fullResponse);
 
@@ -725,7 +773,7 @@ export async function processEngineStream(params: {
                     });
                 }
 
-                await repository.insertNarrativeEvents([
+                const [{ id: assistantEventId }] = await repository.insertNarrativeEvents([
                     {
                         world_id: character.worlds?.id ?? null,
                         character_id: character.id,
@@ -734,10 +782,20 @@ export async function processEngineStream(params: {
                         session_id: normalizedSessionId,
                         client_event_id: assistantClientEventId,
                         event_type: "gm_message",
-                        payload: null,
+                        payload: semantic ? ({ semantic } as JsonObject) : null,
                         dice_roll_required: normalizeDiceRollRequestForEvent(diceRollRequired),
                     },
                 ]);
+
+                if (normalizedSessionId && semantic) {
+                    await repository.persistNarrativeSemantic({
+                        sessionId: normalizedSessionId,
+                        worldId: character.worlds?.id ?? null,
+                        characterId: character.id,
+                        sourceEventId: assistantEventId,
+                        semantic,
+                    });
+                }
 
                 if (normalizedSessionId && sessionCombatState && combatEventResolution) {
                     const persistResult = await repository.persistCombatEvents({

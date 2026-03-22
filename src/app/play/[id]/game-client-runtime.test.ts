@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import {
     appendOptimisticNarrativeEvent,
     applyIncomingNarrativeEvent,
-    beginAssistantStream,
+    prepareAssistantStream,
     consumeAssistantStreamChunk,
     createGameClientRuntimeState,
     reconcileRuntimeSnapshot,
@@ -88,7 +88,7 @@ test('clients converge across optimistic submit, stream completion, realtime gap
     assert.deepEqual(clientA.events, clientB.events)
     assert.deepEqual(clientA.events.map((event) => event.id), ['db-100', 'db-101'])
 
-    let streamState = beginAssistantStream(clientA)
+    let streamState = prepareAssistantStream(clientA)
     let streamBuffer = ''
 
     const firstStreamPass = consumeAssistantStreamChunk(
@@ -135,7 +135,7 @@ test('clients converge across optimistic submit, stream completion, realtime gap
 })
 
 test('stream runtime preserves partial JSONL buffers and exposes dice resolution state on completion', () => {
-    const initial = beginAssistantStream(createGameClientRuntimeState())
+    const initial = prepareAssistantStream(createGameClientRuntimeState())
 
     const partial = consumeAssistantStreamChunk(
         initial,

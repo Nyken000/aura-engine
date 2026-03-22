@@ -22,7 +22,7 @@ export async function POST(request: NextRequest) {
         }
 
         const useServiceClient = isProcessorSecretValid(request)
-        const supabase = useServiceClient ? createServiceClient() : createServerClient()
+        const supabase = useServiceClient ? createServiceClient() : await createServerClient()
 
         if (!useServiceClient && !(await isAdmin())) {
             return NextResponse.json({ error: 'No autorizado.' }, { status: 403 })

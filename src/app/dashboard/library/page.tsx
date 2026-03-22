@@ -6,7 +6,7 @@ import { ArrowLeft, BookOpen } from 'lucide-react'
 import LibraryClient from './LibraryClient'
 
 export default async function LibraryPage() {
-  const supabase = createClient()
+  const supabase = await createClient()
   const {
     data: { user },
   } = await supabase.auth.getUser()

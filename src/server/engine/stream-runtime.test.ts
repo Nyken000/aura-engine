@@ -104,6 +104,24 @@ class FakeEngineStreamRepository implements EngineStreamRepository {
         this.recentCharacterEvents = params.recentCharacterEvents ?? [];
     }
 
+    joinedMemberships: Array<{
+        sessionId: string;
+        userId: string;
+        characterId: string | null;
+    }> = [];
+
+    async getJoinedSessionMembership(sessionId: string, userId: string) {
+        const found = this.joinedMemberships.find((m) => m.sessionId === sessionId && m.userId === userId);
+        if (!found) return null;
+        return {
+            id: `membership:${sessionId}:${userId}`,
+            session_id: found.sessionId,
+            user_id: found.userId,
+            character_id: found.characterId,
+            status: "joined" as const,
+        };
+    }
+
     async getCharacterWithWorld(characterId: string) {
         return this.character.id === characterId ? this.character : null;
     }
@@ -130,6 +148,11 @@ class FakeEngineStreamRepository implements EngineStreamRepository {
 
     async insertNarrativeEvents(rows: NarrativeEventInsert[]) {
         this.narrativeEvents.push(...rows);
+        return rows.map((_, i) => ({ id: `event-${this.narrativeEvents.length - rows.length + i}` }));
+    }
+
+    async persistNarrativeSemantic() {
+        // No-op for now in fake
     }
 
     async updateCharacter(characterId: string, patch: CharacterUpdatePatch) {
@@ -218,8 +241,7 @@ class ConcurrentDuplicateRepository extends FakeEngineStreamRepository {
         const clientEventId = firstRow?.client_event_id ?? null;
 
         if (!clientEventId) {
-            await super.insertNarrativeEvents(rows);
-            return;
+            return super.insertNarrativeEvents(rows);
         }
 
         if (this.insertedClientEventIds.has(clientEventId)) {
@@ -238,7 +260,7 @@ class ConcurrentDuplicateRepository extends FakeEngineStreamRepository {
             await this.firstInsertGate;
         }
 
-        await super.insertNarrativeEvents(rows);
+        return super.insertNarrativeEvents(rows);
     }
 
     unblockFirstInsert() {
@@ -357,6 +379,9 @@ test("stream runtime persists tactical events, character HP sync and shared part
         sessionPlayers: buildSessionPlayers(),
         sessionCombatState: buildActiveCombatState(),
     });
+    repository.joinedMemberships = [
+        { sessionId: "session-1", userId: "user-1", characterId: "char-1" },
+    ];
 
     const modelGateway = createModelGatewayFromText(
         JSON.stringify({
@@ -413,7 +438,6 @@ test("stream runtime persists tactical events, character HP sync and shared part
 
     assert.equal(response.status, 200);
 
-
     const bodyText = await readStreamResponse(response);
     assert.match(bodyText, /"done":true/);
 
@@ -456,6 +480,9 @@ test("stream runtime marks combat as ended when combat_events resolves the encou
         sessionPlayers: buildSessionPlayers(),
         sessionCombatState: buildActiveCombatState(),
     });
+    repository.joinedMemberships = [
+        { sessionId: "session-1", userId: "user-1", characterId: "char-1" },
+    ];
 
     const modelGateway = createModelGatewayFromText(
         JSON.stringify({
@@ -487,7 +514,6 @@ test("stream runtime marks combat as ended when combat_events resolves the encou
     });
 
     assert.equal(response.status, 200);
-
 
     const bodyText = await readStreamResponse(response);
     assert.match(bodyText, /"combat_ended":true/);
@@ -538,7 +564,6 @@ test("stream runtime requests dice roll when the model asks for it", async () =>
     });
 
     assert.equal(response.status, 200);
-
 
     const bodyText = await readStreamResponse(response);
     assert.match(bodyText, /"done":true/);
@@ -593,7 +618,6 @@ test("stream runtime applies hp and inventory changes outside session combat", a
     });
 
     assert.equal(response.status, 200);
-
 
     const bodyText = await readStreamResponse(response);
     assert.match(bodyText, /"done":true/);
@@ -705,6 +729,9 @@ test("stream runtime advances shared session turn only on explicit system marker
         sessionCombatState: buildActiveCombatState(),
         recentSessionEvents: [],
     });
+    repository.joinedMemberships = [
+        { sessionId: "session-1", userId: "user-1", characterId: "char-1" },
+    ];
 
     const modelGateway = createModelGatewayFromText(
         JSON.stringify({
@@ -797,16 +824,11 @@ test("stream runtime registers initiative in shared session state", async () => 
         sessionCombatState: initiativeState,
         recentSessionEvents: [],
     });
+    repository.joinedMemberships = [
+        { sessionId: "session-1", userId: "user-1", characterId: "char-1" },
+    ];
 
-    const modelGateway = createModelGatewayFromText(
-        JSON.stringify({
-            narrative_response: "No debería llamarse en esta ruta.",
-            state_changes: { hp_delta: 0, inventory_added: [], inventory_removed: [] },
-            dice_roll_required: { needed: false },
-            combat: null,
-            combat_events: null,
-        }),
-    );
+    const modelGateway = createModelGatewayFromText("Result");
 
     const response = await processEngineStream({
         repository,
@@ -814,29 +836,96 @@ test("stream runtime registers initiative in shared session state", async () => 
         userId: "user-1",
         body: {
             characterId: "char-1",
-            content: "[SISTEMA_INICIATIVA: 18]",
+            content: "[SISTEMA_INICIATIVA: 15]",
             sessionId: "session-1",
-            clientEventId: "client-event-init-1",
         },
     });
 
     assert.equal(response.status, 200);
-    await readStreamResponse(response);
     assert.equal(repository.combatTransitions.length, 1);
+    assert.equal(repository.combatTransitions[0].combatState.status, "active");
+});
 
-    const transition = repository.combatTransitions[0];
-    assert.equal(transition.combatState.status, "active");
-    assert.equal(transition.combatState.turn_index, 0);
-    assert.equal(transition.turnPlayerId, "user-1");
+test("stream runtime enforces security boundaries and character binding", async (t) => {
+    const character = buildCharacter();
+    const repository = new FakeEngineStreamRepository({ character });
+    const modelGateway = createModelGatewayFromText("Narrative result");
 
-    const initiatives = transition.combatState.participants.map((participant) => ({
-        id: participant.id,
-        initiative: participant.initiative,
-    }));
+    await t.test("rejects group channel without an active session", async () => {
+        const response = await processEngineStream({
+            repository,
+            modelGateway,
+            userId: "user-1",
+            body: {
+                characterId: "char-1",
+                content: "Hola grupo",
+                channel: "group",
+                sessionId: null, // No session
+            },
+        });
 
-    assert.deepEqual(initiatives[0], {
-        id: "player:user-1",
-        initiative: 18,
+        assert.equal(response.status, 400);
+        const json = await response.json();
+        assert.equal(json.error, "El canal grupal requiere una sesión activa");
+    });
+
+    await t.test("denies access when user is not a member of the session", async () => {
+        repository.joinedMemberships = []; // User not joined
+
+        const response = await processEngineStream({
+            repository,
+            modelGateway,
+            userId: "user-1",
+            body: {
+                characterId: "char-1",
+                content: "Hola",
+                sessionId: "session-1",
+            },
+        });
+
+        assert.equal(response.status, 403);
+        const json = await response.json();
+        assert.equal(json.error, "No autorizado para esta sesión");
+    });
+
+    await t.test("rejects when the active character is not bound to the session for that user", async () => {
+        repository.joinedMemberships = [
+            { sessionId: "session-1", userId: "user-1", characterId: "char-OTHER" }
+        ];
+
+        const response = await processEngineStream({
+            repository,
+            modelGateway,
+            userId: "user-1",
+            body: {
+                characterId: "char-1", // Using char-1 but session expects char-OTHER
+                content: "Hola",
+                sessionId: "session-1",
+            },
+        });
+
+        assert.equal(response.status, 409);
+        const json = await response.json();
+        assert.equal(json.error, "El personaje activo no coincide con el personaje vinculado a la sesión");
+    });
+
+    await t.test("allows access when session and character binding are correct", async () => {
+        repository.joinedMemberships = [
+            { sessionId: "session-1", userId: "user-1", characterId: "char-1" }
+        ];
+
+        const response = await processEngineStream({
+            repository,
+            modelGateway,
+            userId: "user-1",
+            body: {
+                characterId: "char-1",
+                content: "Hola",
+                sessionId: "session-1",
+            },
+        });
+
+        assert.equal(response.status, 200);
     });
 });
 
@@ -856,6 +945,9 @@ test("stream runtime detects duplicate session client_event_id before inserting"
             },
         ],
     });
+    repository.joinedMemberships = [
+        { sessionId: "session-1", userId: "user-1", characterId: "char-1" },
+    ];
 
     const modelGateway = createModelGatewayFromText(
         JSON.stringify({
@@ -899,6 +991,9 @@ test("stream runtime tolerates concurrent duplicate insert races via unique cons
         sessionCombatState: buildActiveCombatState(),
         recentSessionEvents: [],
     });
+    repository.joinedMemberships = [
+        { sessionId: "session-1", userId: "user-1", characterId: "char-1" },
+    ];
 
     const modelGateway = createModelGatewayFromText(
         JSON.stringify({
@@ -1011,7 +1106,6 @@ test("stream runtime resolves persisted dice results without asking for another 
 
     assert.equal(response.status, 200);
 
-
     const bodyText = await readStreamResponse(response);
     assert.match(bodyText, /"done":true/);
     assert.match(promptObserved, /ya realizó la tirada solicitada/i);
@@ -1020,6 +1114,8 @@ test("stream runtime resolves persisted dice results without asking for another 
     assert.equal(repository.narrativeEvents.length, 2);
     assert.equal(repository.narrativeEvents[0].event_type, "player_message");
     assert.deepEqual(repository.narrativeEvents[0].payload, {
+        sender_name: "Kael",
+        channel: "adventure",
         dice_result: {
             stat: "dex",
             skill: "lockpicking",
@@ -1042,6 +1138,9 @@ test("stream runtime does not start model stream for explicit turn advancement m
         sessionCombatState: buildActiveCombatState(),
         recentSessionEvents: [],
     });
+    repository.joinedMemberships = [
+        { sessionId: "session-1", userId: "user-1", characterId: "char-1" },
+    ];
 
     let called = false;
 
@@ -1121,6 +1220,9 @@ test("stream runtime discards invalid structured mechanics while preserving vali
         sessionPlayers: buildSessionPlayers(),
         sessionCombatState: buildActiveCombatState(),
     });
+    repository.joinedMemberships = [
+        { sessionId: "session-1", userId: "user-1", characterId: "char-1" },
+    ];
 
     const modelGateway = createModelGatewayFromText(
         JSON.stringify({

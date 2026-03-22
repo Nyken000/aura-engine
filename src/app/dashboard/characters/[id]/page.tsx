@@ -70,8 +70,13 @@ function formatModifier(mod: number) {
   return mod >= 0 ? `+${mod}` : `${mod}`
 }
 
-export default async function CharacterSheetPage({ params }: { params: { id: string } }) {
-  const cookieStore = cookies()
+export default async function CharacterSheetPage({
+  params: paramsPromise,
+}: {
+  params: Promise<{ id: string }>
+}) {
+  const params = await paramsPromise
+  const cookieStore = await cookies()
   
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,

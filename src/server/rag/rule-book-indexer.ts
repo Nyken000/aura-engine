@@ -296,7 +296,9 @@ export async function indexRuleBook(params: {
     await markRuleBookProcessing(supabase, ruleBookId)
 
     try {
-        const pdf = (await import('pdf-parse')).default
+        const pdfModule = await import('pdf-parse')
+        const pdf = (pdfModule as unknown as { default?: (buffer: Buffer) => Promise<{ text?: string }> }).default
+          ?? (pdfModule as unknown as (buffer: Buffer) => Promise<{ text?: string }>)
         const parsed = await pdf(fileBuffer)
         const normalizedText = normalizePdfText(parsed.text || '')
 

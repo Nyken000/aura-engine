@@ -5,7 +5,7 @@ import { createClient } from '@/utils/supabase/server'
  * Used to protect admin-only pages and server actions.
  */
 export async function isAdmin(): Promise<boolean> {
-  const supabase = createClient()
+  const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return false
 
@@ -22,7 +22,7 @@ export async function isAdmin(): Promise<boolean> {
  * Returns the current user's role, or null if not authenticated.
  */
 export async function getUserRole(): Promise<'admin' | 'player' | null> {
-  const supabase = createClient()
+  const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return null
 

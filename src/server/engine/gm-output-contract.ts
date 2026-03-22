@@ -3,6 +3,7 @@ import type {
     CombatEventResolution,
     CombatParticipantReference,
 } from "@/server/combat/session-combat-events";
+import type { NarrativeSemanticPayload } from "@/server/world/world-state-types";
 
 export type StateChanges = {
     hp_delta: number;
@@ -40,6 +41,7 @@ export type GmStructuredOutput = {
     dice_roll_required: DiceRollRequest;
     combat: CombatUpdate | null;
     combat_events: CombatEventResolution;
+    semantic: NarrativeSemanticPayload | null;
 };
 
 export type ParsedGmStructuredOutput = {
@@ -48,6 +50,7 @@ export type ParsedGmStructuredOutput = {
     diceRollRequired: DiceRollRequest | null;
     combatUpdate: CombatUpdate | null;
     combatEventResolution: CombatEventResolution;
+    semantic: NarrativeSemanticPayload | null;
     validationErrors: string[];
     rawJson: string | null;
 };
@@ -82,6 +85,15 @@ const GM_OUTPUT_SCHEMA_EXAMPLE = `{
     "condition_applied": null,
     "condition_removed": null,
     "combat_ended": null
+  },
+  "semantic": {
+    "entities": [],
+    "quests": {
+      "upserts": [],
+      "updates": []
+    },
+    "relationships": [],
+    "companions": []
   }
 }`;
 
@@ -616,6 +628,7 @@ export function parseGmStructuredOutput(fullResponse: string): ParsedGmStructure
             diceRollRequired: null,
             combatUpdate: null,
             combatEventResolution: null,
+            semantic: null,
             validationErrors,
             rawJson: null,
         };
@@ -634,6 +647,7 @@ export function parseGmStructuredOutput(fullResponse: string): ParsedGmStructure
             diceRollRequired: null,
             combatUpdate: null,
             combatEventResolution: null,
+            semantic: null,
             validationErrors,
             rawJson,
         };
@@ -648,6 +662,7 @@ export function parseGmStructuredOutput(fullResponse: string): ParsedGmStructure
             diceRollRequired: null,
             combatUpdate: null,
             combatEventResolution: null,
+            semantic: null,
             validationErrors,
             rawJson,
         };
@@ -669,6 +684,7 @@ export function parseGmStructuredOutput(fullResponse: string): ParsedGmStructure
         parsed.combat_events,
         validationErrors,
     );
+    const semantic = (parsed.semantic as NarrativeSemanticPayload) || null;
 
     return {
         narrative: narrative ?? sanitizeNarrativeFallback(fullResponse),
@@ -676,6 +692,7 @@ export function parseGmStructuredOutput(fullResponse: string): ParsedGmStructure
         diceRollRequired,
         combatUpdate,
         combatEventResolution,
+        semantic,
         validationErrors,
         rawJson,
     };

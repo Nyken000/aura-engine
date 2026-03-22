@@ -1,6 +1,6 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700;900&family=IM+Fell+English:ital@0;1&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+@import "tailwindcss";
+@config "../../tailwind.config.ts";
 
 /* ================================================================
    AURA ENGINE — Global Design System
@@ -8,9 +8,6 @@
    Fonts: Cinzel (headings) · IM Fell English (narrative/GM) · Inter (UI)
    Palette: Warm stone black · Amber gold · Deep crimson
    ================================================================ */
-
-/* --- Google Fonts --- */
-@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700;900&family=IM+Fell+English:ital@0;1&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
 /* --- CSS Custom Properties --- */
 :root {

@@ -1,6 +1,6 @@
 'use client'
 
-import { Backpack, Heart, Shield, Sparkles, Swords, Zap } from 'lucide-react'
+import { Backpack, Heart, Shield, Sparkles, Zap } from 'lucide-react'
 
 import { ALL_SKILLS, formatMod, isSkillProficient, skillModifier, statMod } from '@/utils/game/skills'
 import type { CharacterSheet } from '../types'
@@ -19,9 +19,9 @@ function getModifierTone(value: number) {
   return 'text-red-400/80'
 }
 
-function getRarityTone(item: InventoryLike) {
-  const name = (item.name || '').toLowerCase()
-  const desc = (item.description || '').toLowerCase()
+function getRarityTone(item: InventoryLike | null | undefined) {
+  const name = (item?.name || '').toLowerCase()
+  const desc = (item?.description || '').toLowerCase()
   
   if (name.includes('mítico') || desc.includes('mítico') || name.includes('legendario')) {
     return 'border-amber-500/40 bg-amber-900/20 text-amber-300'
@@ -57,8 +57,8 @@ function getArmorClass(character: CharacterSheet) {
   return directArmorClass ?? 10 + dexMod
 }
 
-function isTraitItem(item: InventoryLike) {
-  const type = (item.type ?? '').toLowerCase()
+function isTraitItem(item: InventoryLike | null | undefined) {
+  const type = (item?.type ?? '').toLowerCase()
   return type === 'passive' || type === 'trait' || type === 'rasgo'
 }
 
@@ -70,7 +70,7 @@ export function GameCharacterPanel({ character }: { character: CharacterSheet })
 
   const armorClass = getArmorClass(character)
 
-  const rawInventory = (character.inventory ?? []) as InventoryLike[]
+  const rawInventory = ((character.inventory ?? []) as InventoryLike[]).filter((i) => i !== null)
   const traits = rawInventory.filter(isTraitItem)
   const inventory = rawInventory.filter((item) => !isTraitItem(item))
   const skills = ALL_SKILLS

@@ -1,10 +1,16 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import type { RefObject } from 'react'
-import { AlertTriangle, Dices, MessageSquare, Shield, Sparkles, Swords, User } from 'lucide-react'
+import { Dices, Sparkles } from 'lucide-react'
 
-import type { NarrativeEvent, CharacterSheet } from '../types'
+import type {
+  CharacterSheet,
+  NarrativeEvent,
+  SemanticEntityAnnotation,
+  SessionQuest,
+  SidebarSelection,
+} from '../types'
 import { DiceRoller } from './DiceRoller'
 import type { DiceRollOutcome, DiceRollRequired } from '@/types/dice'
 
@@ -28,6 +34,136 @@ function getCombatBadgeLabel(event: NarrativeEvent) {
   if (event.event_type === 'attack_declared') return 'Ataque'
   if (event.event_type === 'combat_ended') return 'Combate Finalizado'
   return 'Combate'
+}
+
+function getEntityClasses(kind: SemanticEntityAnnotation['kind']) {
+  switch (kind) {
+    case 'npc':
+      return 'text-rose-300 bg-rose-950/35 border-rose-900/50 hover:bg-rose-950/50'
+    case 'location':
+      return 'text-sky-300 bg-sky-950/35 border-sky-900/50 hover:bg-sky-950/50'
+    case 'objective':
+      return 'text-amber-300 bg-amber-950/35 border-amber-900/50 hover:bg-amber-950/50'
+    case 'item':
+      return 'text-violet-300 bg-violet-950/35 border-violet-900/50 hover:bg-violet-950/50'
+    case 'faction':
+      return 'text-emerald-300 bg-emerald-950/35 border-emerald-900/50 hover:bg-emerald-950/50'
+    default:
+      return 'text-stone-200 bg-stone-900/35 border-stone-800/60 hover:bg-stone-900/50'
+  }
+}
+
+function escapeRegExp(text: string) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function buildSemanticTokens(content: string, entities: SemanticEntityAnnotation[]) {
+  if (!entities.length) return [{ text: content, entity: null as SemanticEntityAnnotation | null }]
+
+  const normalized = entities
+    .flatMap((entity) => [entity.label, ...(entity.aliases ?? [])].map((alias) => ({ entity, alias })))
+    .filter(({ alias }) => alias && alias.trim().length > 1)
+    .sort((a, b) => b.alias.length - a.alias.length)
+
+  const matches: Array<{ start: number; end: number; entity: SemanticEntityAnnotation }> = []
+
+  for (const { entity, alias } of normalized) {
+    const regex = new RegExp(`\\b${escapeRegExp(alias)}\\b`, 'gi')
+    let result: RegExpExecArray | null = regex.exec(content)
+
+    while (result) {
+      const start = result.index
+      const end = start + result[0].length
+      const overlaps = matches.some((match) => !(end <= match.start || start >= match.end))
+
+      if (!overlaps) {
+        matches.push({ start, end, entity })
+      }
+
+      result = regex.exec(content)
+    }
+  }
+
+  matches.sort((a, b) => a.start - b.start)
+
+  const parts: Array<{ text: string; entity: SemanticEntityAnnotation | null }> = []
+  let cursor = 0
+
+  for (const match of matches) {
+    if (match.start > cursor) {
+      parts.push({ text: content.slice(cursor, match.start), entity: null })
+    }
+
+    parts.push({
+      text: content.slice(match.start, match.end),
+      entity: match.entity,
+    })
+
+    cursor = match.end
+  }
+
+  if (cursor < content.length) {
+    parts.push({ text: content.slice(cursor), entity: null })
+  }
+
+  return parts
+}
+
+function SemanticNarrativeText({
+  text,
+  entities,
+  onSidebarSelectionChange,
+}: {
+  text: string
+  entities: SemanticEntityAnnotation[]
+  onSidebarSelectionChange: (selection: SidebarSelection) => void
+}) {
+  const paragraphs = text.split('\n')
+
+  return (
+    <div className="space-y-3 font-serif text-[15px] leading-relaxed text-stone-300">
+      {paragraphs.map((paragraph, index) => {
+        if (paragraph.trim().length === 0) return <div key={index} className="h-2" />
+
+        const tokens = buildSemanticTokens(paragraph, entities)
+
+        return (
+          <p key={index}>
+            {tokens.map((token, tokenIndex) => {
+              if (!token.entity) {
+                return <Fragment key={`${index}-${tokenIndex}`}>{token.text}</Fragment>
+              }
+
+              return (
+                <button
+                  key={`${token.entity.key}-${index}-${tokenIndex}`}
+                  type="button"
+                  className={`inline rounded-md border px-1 py-0.5 font-medium transition ${getEntityClasses(token.entity.kind)}`}
+                  onClick={() => {
+                    const entity = token.entity as SemanticEntityAnnotation
+                    if (entity.kind === 'npc') {
+                      onSidebarSelectionChange({
+                        type: 'relationship',
+                        npcKey: entity.key,
+                      })
+                      return
+                    }
+
+                    onSidebarSelectionChange({
+                      type: 'entity',
+                      entity: entity,
+                    })
+                  }}
+                >
+                  {token.text}
+                </button>
+              )
+            })}
+          </p>
+        )
+      })}
+    </div>
+  )
 }
 
 function TypewriterMessage({ text, charSpeed = 20 }: { text: string; charSpeed?: number }) {
@@ -55,34 +191,96 @@ function TypewriterMessage({ text, charSpeed = 20 }: { text: string; charSpeed?:
   }, [text, charSpeed])
 
   const isDone = displayed.length >= text.length
-  const paragraphs = text.split('\n')
-  let charsRendered = 0
+  const paragraphs = displayed.split('\n')
 
   return (
     <div className="space-y-3 font-serif text-[15px] leading-relaxed text-stone-300">
       {paragraphs.map((paragraph, index) => {
-        const paraStart = charsRendered
-        const paraEnd = paraStart + paragraph.length
-        charsRendered = paraEnd + 1
-
-        const visibleChars = Math.max(0, Math.min(paragraph.length, displayed.length - paraStart))
-        const visibleParagraph = paragraph.slice(0, visibleChars)
-        const isStarted = displayed.length > paraStart
         const isLastParagraph = index === paragraphs.length - 1
-        const isLastVisible = isLastParagraph || displayed.length <= paraEnd
-
-        if (!isStarted && paragraph === '') return <div key={index} className="h-2" />
-        if (!isStarted) return null
 
         return (
           <p key={index} className={paragraph === '' ? 'h-2' : 'min-h-[1.5em]'}>
-            {visibleParagraph}
-            {isLastVisible && !isDone ? (
+            {paragraph}
+            {isLastParagraph && !isDone ? (
               <span className="ml-[2px] inline-block h-[1.1em] w-[2px] animate-pulse bg-amber-600/60 align-middle" />
             ) : null}
           </p>
         )
       })}
+    </div>
+  )
+}
+
+function QuestOfferCard({
+  quest,
+  onAccept,
+  onDecline,
+  onNegotiate,
+  onOpenQuest,
+}: {
+  quest: NonNullable<NonNullable<NarrativeEvent['payload']>['semantic']>['quests'] extends infer T
+  ? T extends { upserts?: infer U }
+  ? U extends Array<infer Item>
+  ? Item
+  : never
+  : never
+  : never
+  onAccept: () => void
+  onDecline: () => void
+  onNegotiate: () => void
+  onOpenQuest: () => void
+}) {
+  return (
+    <div className="mt-4 rounded-xl border border-amber-900/50 bg-stone-950/60 p-4">
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <div className="text-[10px] uppercase tracking-[0.22em] text-amber-400">Encargo Ofrecido</div>
+        <button
+          type="button"
+          onClick={onOpenQuest}
+          className="rounded-md border border-amber-900/40 px-2 py-1 text-[10px] uppercase tracking-wider text-amber-300 transition hover:bg-amber-950/30"
+        >
+          Ver detalle
+        </button>
+      </div>
+
+      <h4 className="font-serif text-sm tracking-wide text-amber-300">{quest.title}</h4>
+      <p className="mt-2 text-sm leading-relaxed text-stone-300">{quest.description}</p>
+
+      {quest.objectiveSummary ? (
+        <div className="mt-2 text-xs leading-relaxed text-stone-400">
+          <span className="uppercase tracking-[0.2em] text-stone-500">Objetivo:</span> {quest.objectiveSummary}
+        </div>
+      ) : null}
+
+      {quest.rewardSummary ? (
+        <div className="mt-1 text-xs leading-relaxed text-stone-400">
+          <span className="uppercase tracking-[0.2em] text-stone-500">Recompensa:</span> {quest.rewardSummary}
+        </div>
+      ) : null}
+
+      <div className="mt-4 flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={onAccept}
+          className="rounded-lg border border-emerald-900/50 bg-emerald-950/30 px-3 py-2 text-xs uppercase tracking-widest text-emerald-300 transition hover:bg-emerald-900/30"
+        >
+          Aceptar
+        </button>
+        <button
+          type="button"
+          onClick={onNegotiate}
+          className="rounded-lg border border-amber-900/50 bg-amber-950/20 px-3 py-2 text-xs uppercase tracking-widest text-amber-300 transition hover:bg-amber-900/25"
+        >
+          Negociar
+        </button>
+        <button
+          type="button"
+          onClick={onDecline}
+          className="rounded-lg border border-red-900/50 bg-red-950/20 px-3 py-2 text-xs uppercase tracking-widest text-red-300 transition hover:bg-red-900/25"
+        >
+          Rechazar
+        </button>
+      </div>
     </div>
   )
 }
@@ -96,6 +294,9 @@ export function GameNarrativeFeed({
   pendingDiceRoll,
   onDiceResult,
   isSending,
+  onQuestAction,
+  onSidebarSelectionChange,
+  activeSessionQuests,
 }: {
   visibleEvents: NarrativeEvent[]
   character: CharacterSheet
@@ -105,24 +306,26 @@ export function GameNarrativeFeed({
   pendingDiceRoll: DiceRollRequired | null
   onDiceResult: (result: DiceRollOutcome) => Promise<void> | void
   isSending: boolean
+  onQuestAction: (text: string) => void
+  onSidebarSelectionChange: (selection: SidebarSelection) => void
+  activeSessionQuests: SessionQuest[]
 }) {
   return (
-    <div className="absolute inset-0 flex flex-col overflow-y-auto overflow-x-hidden px-4 py-8 pb-16 md:px-8 custom-scrollbar scroll-smooth">
-      <div className="flex-1 w-full mx-auto max-w-3xl flex flex-col gap-6 pb-4">
-        
-        {/* Ancient Divider */}
+    <div className="custom-scrollbar absolute inset-0 flex flex-col overflow-y-auto overflow-x-hidden px-4 py-8 pb-16 scroll-smooth md:px-8">
+      <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 pb-4">
         <div className="mb-4 flex items-center justify-center opacity-40">
           <div className="h-px w-16 bg-gradient-to-r from-transparent to-amber-700/50" />
-          <div className="mx-2 text-[10px] tracking-[0.3em] text-amber-500 uppercase">La Crónica</div>
+          <div className="mx-2 text-[10px] uppercase tracking-[0.3em] text-amber-500">La Crónica</div>
           <div className="h-px w-16 bg-gradient-to-l from-transparent to-amber-700/50" />
         </div>
 
         {visibleEvents.map((event) => {
-          const senderName = event.role === 'user'
-            ? getSenderName(event, character.name)
-            : event.role === 'assistant'
-              ? 'Dungeon Master'
-              : 'Sistema'
+          const senderName =
+            event.role === 'user'
+              ? getSenderName(event, character.name)
+              : event.role === 'assistant'
+                ? 'Dungeon Master'
+                : 'Sistema'
 
           const isUser = event.role === 'user'
           const isGroup = event.payload?.channel === 'group'
@@ -132,55 +335,94 @@ export function GameNarrativeFeed({
             event.event_type === 'condition_applied' ||
             event.event_type === 'attack_declared' ||
             event.event_type === 'combat_ended'
-          
-          const isSystem = event.role === 'system'
 
-          // Dark Fantasy Bubble Styles
+          const isSystem = event.role === 'system'
+          const semanticEntities = event.payload?.semantic?.entities ?? []
+          const questOffers =
+            event.payload?.semantic?.quests?.upserts?.filter((quest) => quest.status === 'offered') ?? []
+
           let bubbleStyle = ''
           let labelColor = ''
+
           if (isUser) {
             if (isGroup) {
-              bubbleStyle = 'border-sky-900/30 bg-sky-950/20 text-sky-100 ml-12 lg:ml-32 shadow-[0_4px_20px_-5px_rgba(8,145,178,0.15)]'
+              bubbleStyle =
+                'border-sky-900/30 bg-sky-950/20 text-sky-100 ml-12 lg:ml-32 shadow-[0_4px_20px_-5px_rgba(8,145,178,0.15)]'
               labelColor = 'text-sky-500/70'
             } else {
-              bubbleStyle = 'border-stone-700/60 bg-stone-800/60 text-stone-200 ml-12 lg:ml-32 shadow-[0_4px_24px_-8px_rgba(0,0,0,0.5)]'
+              bubbleStyle =
+                'border-stone-700/60 bg-stone-800/60 text-stone-200 ml-12 lg:ml-32 shadow-[0_4px_24px_-8px_rgba(0,0,0,0.5)]'
               labelColor = 'text-stone-400'
             }
           } else if (isSystem) {
             bubbleStyle = 'border-stone-800/50 bg-stone-950/60 text-stone-400 mx-12 text-center text-sm italic py-2'
             labelColor = 'text-stone-500'
           } else {
-            // GM
-            bubbleStyle = 'border-amber-900/20 bg-stone-900/40 text-stone-200 mr-12 lg:mr-32 shadow-[0_4px_30px_-5px_rgba(217,119,6,0.1)]'
+            bubbleStyle =
+              'border-amber-900/20 bg-stone-900/40 text-stone-200 mr-12 lg:mr-32 shadow-[0_4px_30px_-5px_rgba(217,119,6,0.1)]'
             labelColor = 'text-amber-600/80'
           }
 
           return (
-            <div key={event.id} className={`flex flex-col w-full ${isUser ? 'items-end' : isSystem ? 'items-center' : 'items-start'}`}>
-              
+            <div
+              key={event.id}
+              className={`flex w-full flex-col ${isUser ? 'items-end' : isSystem ? 'items-center' : 'items-start'}`}
+            >
               {!isSystem && (
                 <div className={`mb-1.5 flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-wider ${labelColor}`}>
                   {isGroup && <span className="font-bold tracking-widest">[OOC]</span>}
-                  <span className="opacity-80 font-medium tracking-widest">{senderName}</span>
-                  
+                  <span className="font-medium tracking-widest opacity-80">{senderName}</span>
+
                   {isCombatSemantic && (
-                    <span className={`inline-flex px-1.5 border rounded-[4px] text-[9px] ${getCombatBadgeColor(event)}`}>
+                    <span className={`inline-flex rounded-[4px] border px-1.5 text-[9px] ${getCombatBadgeColor(event)}`}>
                       {getCombatBadgeLabel(event)}
                     </span>
                   )}
+
                   {event.event_type === 'system_message' && (
-                    <span className="text-amber-500/50 border border-amber-900/50 px-1.5 rounded-[4px] text-[9px]">Aviso</span>
+                    <span className="rounded-[4px] border border-amber-900/50 px-1.5 text-[9px] text-amber-500/50">
+                      Aviso
+                    </span>
                   )}
                 </div>
               )}
 
               <div className={`relative w-fit max-w-[85%] rounded-2xl border px-5 py-4 backdrop-blur-sm ${bubbleStyle}`}>
-                {/* Subtle magical glow for GM messages */}
-                {!isUser && !isSystem && <div className="absolute inset-0 z-0 bg-gradient-to-b from-amber-900/10 to-transparent rounded-2xl pointer-events-none" />}
-                
-                <div className={`relative z-10 font-serif text-[15px] leading-relaxed ${isSystem ? 'text-sm' : ''}`}>
-                  {event.content}
+                {!isUser && !isSystem && (
+                  <div className="pointer-events-none absolute inset-0 z-0 rounded-2xl bg-gradient-to-b from-amber-900/10 to-transparent" />
+                )}
+
+                <div className={`relative z-10 ${isSystem ? 'text-sm' : ''}`}>
+                  <SemanticNarrativeText
+                    text={event.content}
+                    entities={semanticEntities}
+                    onSidebarSelectionChange={onSidebarSelectionChange}
+                  />
                 </div>
+
+                {questOffers.map((quest) => {
+                  const existingQuest = activeSessionQuests.find((item) => item.slug === quest.slug)
+
+                  return (
+                    <QuestOfferCard
+                      key={quest.slug}
+                      quest={quest}
+                      onAccept={() => onQuestAction(`Acepto el encargo "${quest.title}".`)}
+                      onDecline={() => onQuestAction(`Rechazo el encargo "${quest.title}".`)}
+                      onNegotiate={() =>
+                        onQuestAction(
+                          `Puedo ayudar con "${quest.title}", pero quiero mejores condiciones. ¿Qué obtengo a cambio?`,
+                        )
+                      }
+                      onOpenQuest={() =>
+                        onSidebarSelectionChange({
+                          type: 'quest',
+                          questSlug: existingQuest?.slug ?? quest.slug,
+                        })
+                      }
+                    />
+                  )
+                })}
 
                 {event.dice_roll_required?.needed ? (
                   <div className="relative z-10 mt-4 rounded-xl border border-amber-900/40 bg-stone-950/60 p-3 pt-2">
@@ -189,11 +431,11 @@ export function GameNarrativeFeed({
                       Prueba Requerida
                     </div>
                     <div className="text-sm font-serif italic text-stone-300">
-                      "{event.dice_roll_required.flavor}"
+                      &ldquo;{event.dice_roll_required.flavor}&rdquo;
                     </div>
-                    <div className="mt-2 text-xs text-stone-500 font-medium tracking-wider">
-                      {event.dice_roll_required.skill || event.dice_roll_required.stat} 
-                      <span className="mx-2 text-stone-700">|</span> 
+                    <div className="mt-2 text-xs font-medium tracking-wider text-stone-500">
+                      {event.dice_roll_required.skill || event.dice_roll_required.stat}
+                      <span className="mx-2 text-stone-700">|</span>
                       Dificultad <span className="text-amber-500">{event.dice_roll_required.dc}</span>
                     </div>
                   </div>
@@ -204,16 +446,16 @@ export function GameNarrativeFeed({
         })}
 
         {isTyping && (
-           <div className="flex flex-col items-start mr-8 lg:mr-16">
+          <div className="mr-8 flex flex-col items-start lg:mr-16">
             <div className="mb-1.5 flex items-center gap-2 text-[10px] uppercase tracking-wider text-amber-600/80">
-              <span className="font-medium tracking-widest flex items-center gap-1.5">
+              <span className="flex items-center gap-1.5 font-medium tracking-widest">
                 <Sparkles className="h-3 w-3 animate-pulse" />
                 Dungeon Master
               </span>
             </div>
-            
+
             <div className="relative w-full rounded-xl border border-amber-900/20 bg-stone-900/20 px-5 py-4 backdrop-blur-sm">
-              <div className="absolute inset-0 z-0 bg-gradient-to-b from-amber-900/10 to-transparent rounded-xl pointer-events-none" />
+              <div className="pointer-events-none absolute inset-0 z-0 rounded-xl bg-gradient-to-b from-amber-900/10 to-transparent" />
               <div className="relative z-10">
                 <TypewriterMessage text={typewriterText} charSpeed={20} />
               </div>
@@ -222,20 +464,20 @@ export function GameNarrativeFeed({
         )}
 
         {pendingDiceRoll && (
-          <div className="flex flex-col items-center justify-center my-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-             <div className="w-full max-w-sm rounded-2xl border border-amber-900/30 bg-stone-950/80 p-1 shadow-2xl backdrop-blur-md">
-                <DiceRoller
-                  rollData={pendingDiceRoll}
-                  playerStats={(character.stats as Record<string, number>) ?? {}}
-                  playerSkills={character.skills ?? []}
-                  onRollComplete={onDiceResult}
-                  disabled={isSending}
-                />
-             </div>
+          <div className="animate-in fade-in slide-in-from-bottom-4 my-6 flex flex-col items-center justify-center duration-500">
+            <div className="w-full max-w-sm rounded-2xl border border-amber-900/40 bg-stone-950/80 p-4 shadow-[0_8px_30px_-10px_rgba(217,119,6,0.25)]">
+              <DiceRoller
+                rollData={pendingDiceRoll}
+                playerStats={(character.stats as Record<string, number>) ?? {}}
+                playerSkills={character.skills ?? []}
+                onRollComplete={onDiceResult}
+                disabled={isSending}
+              />
+            </div>
           </div>
         )}
 
-        <div ref={chatEndRef as any} className="h-4" />
+        <div ref={chatEndRef} />
       </div>
     </div>
   )
