@@ -156,8 +156,13 @@ export default async function CharacterSheetPage({
     ? stats.custom_spells.filter((spell): spell is SpellEntry => Boolean(spell && typeof spell === 'object'))
     : []
 
-  const safeBackground = character.background && typeof character.background === 'object'
-    ? (character.background as any)
+  const safeBackground = (character.background && typeof character.background === 'object')
+    ? (character.background as { 
+        name?: string; 
+        description?: string; 
+        feature_name?: string; 
+        feature_description?: string 
+      })
     : null
 
   // Separate physical items from passive/magical AI traits

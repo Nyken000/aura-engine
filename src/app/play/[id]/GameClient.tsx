@@ -82,11 +82,6 @@ export default function GameClient({
 
   const {
     activeSessionPlayers,
-    activeSessionQuests,
-    activeSessionQuestUpdates,
-    activeNpcRelationships,
-    activeNpcRelationshipEvents,
-    activeSessionCompanions,
     liveSession,
     liveSessionCombat,
   } = useGameRealtime({
