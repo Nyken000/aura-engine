@@ -7,7 +7,7 @@ import type { CharacterSheet } from '../types'
 import { GameAccordionSection } from './GameAccordionSection'
 
 type InventoryLike = {
-  name: string
+  name?: string | null
   description?: string | null
   type?: string | null
 }
@@ -70,7 +70,12 @@ export function GameCharacterPanel({ character }: { character: CharacterSheet })
 
   const armorClass = getArmorClass(character)
 
-  const rawInventory = ((character.inventory ?? []) as InventoryLike[]).filter((i) => i !== null)
+  const rawInventory = Array.isArray(character.inventory)
+    ? (character.inventory as InventoryLike[]).filter(
+        (item): item is InventoryLike => Boolean(item && typeof item === 'object'),
+      )
+    : []
+
   const traits = rawInventory.filter(isTraitItem)
   const inventory = rawInventory.filter((item) => !isTraitItem(item))
   const skills = ALL_SKILLS
@@ -208,10 +213,10 @@ export function GameCharacterPanel({ character }: { character: CharacterSheet })
           accent="violet"
         >
           <div className="space-y-2">
-            {traits.length ? traits.map(item => (
-              <div key={item.name} className="rounded border border-emerald-900/30 bg-emerald-950/10 p-3">
-                <h4 className="text-xs font-serif text-emerald-400 mb-1 tracking-wide">{item.name}</h4>
-                <p className="text-[11px] text-stone-400 leading-relaxed font-light">{item.description}</p>
+            {traits.length ? traits.map((item, index) => (
+              <div key={`${item.name || 'trait'}-${index}`} className="rounded border border-emerald-900/30 bg-emerald-950/10 p-3">
+                <h4 className="text-xs font-serif text-emerald-400 mb-1 tracking-wide">{item.name || 'Rasgo sin nombre'}</h4>
+                <p className="text-[11px] text-stone-400 leading-relaxed font-light">{item.description || 'Sin descripción.'}</p>
               </div>
             )) : (
               <div className="text-center p-3 text-xs italic text-stone-600">Sin habilidades especiales.</div>
@@ -230,11 +235,11 @@ export function GameCharacterPanel({ character }: { character: CharacterSheet })
           accent="stone"
         >
           <div className="space-y-2">
-            {inventory.length ? inventory.map(item => {
+            {inventory.length ? inventory.map((item, index) => {
               const tone = getRarityTone(item)
               return (
-                <div key={item.name} className={`rounded border ${tone} p-3`}>
-                  <h4 className="text-xs font-serif mb-1 tracking-wide">{item.name}</h4>
+                <div key={`${item.name || 'item'}-${index}`} className={`rounded border ${tone} p-3`}>
+                  <h4 className="text-xs font-serif mb-1 tracking-wide">{item.name || 'Objeto sin nombre'}</h4>
                   <p className="text-[11px] opacity-80 leading-relaxed font-light">{item.description || 'Objeto misterioso.'}</p>
                 </div>
               )

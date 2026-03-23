@@ -5,15 +5,15 @@ import Link from 'next/link'
 import { Users, Plus, Key, Crown, Play, ChevronRight, X, Loader2 } from 'lucide-react'
 import { createGameSession, joinGameSession } from '@/app/actions/sessions'
 
-interface World { id: string; name: string; genre: string }
+interface World { id: string; name?: string | null; genre?: string | null }
 interface Session {
   id: string
-  invite_code: string
-  status: string
-  host_id: string
+  invite_code?: string | null
+  status?: string | null
+  host_id?: string | null
   max_players: number
-  worlds: { name: string; genre: string } | null
-  profiles: { username: string } | null
+  worlds: { name?: string | null; genre?: string | null } | null
+  profiles: { username?: string | null } | null
 }
 interface Props {
   worlds: World[]
@@ -22,15 +22,20 @@ interface Props {
 }
 
 export default function MultiplayerPanel({ worlds, activeSessions, currentUserId }: Props) {
+  const safeWorlds = Array.isArray(worlds)
+    ? worlds.filter((world): world is World => Boolean(world && typeof world === 'object' && world.id))
+    : []
+
+  const safeActiveSessions = Array.isArray(activeSessions)
+    ? activeSessions.filter((session): session is Session => Boolean(session && typeof session === 'object' && session.id))
+    : []
+
   const [modal, setModal] = useState<'none' | 'create' | 'join'>('none')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [joinCode, setJoinCode] = useState('')
   const [selectedWorld, setSelectedWorld] = useState('')
   const [maxPlayers, setMaxPlayers] = useState(4)
-
-  const safeSessions = (activeSessions ?? []).filter(Boolean)
-  const safeWorlds = (worlds ?? []).filter(Boolean)
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -76,8 +81,8 @@ export default function MultiplayerPanel({ worlds, activeSessions, currentUserId
             <Users className="w-4 h-4 text-violet-400" />
           </div>
           <h2 className="font-display text-xl font-bold text-parchment-200">Multijugador</h2>
-          {safeSessions.length > 0 && (
-            <span className="text-xs text-foreground/40 font-mono">{safeSessions.length}</span>
+          {safeActiveSessions.length > 0 && (
+            <span className="text-xs text-foreground/40 font-mono">{safeActiveSessions.length}</span>
           )}
         </div>
         <div className="flex gap-2">
@@ -97,7 +102,7 @@ export default function MultiplayerPanel({ worlds, activeSessions, currentUserId
       </div>
 
       {/* Active Sessions */}
-      {safeSessions.length === 0 ? (
+      {safeActiveSessions.length === 0 ? (
         <div className="flex flex-col items-center justify-center p-10 rounded-2xl border border-dashed border-violet-900/30 bg-stone-950/30 text-center">
           <div className="text-3xl mb-3">🎲</div>
           <p className="text-sm text-foreground/40">Sin sesiones activas</p>
@@ -105,10 +110,10 @@ export default function MultiplayerPanel({ worlds, activeSessions, currentUserId
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          {safeSessions.map(session => (
+          {safeActiveSessions.map(session => (
             <Link
               key={session.id}
-              href={`/session/${session.invite_code}`}
+              href={`/session/${session.invite_code || session.id}`}
               className="group relative p-4 rounded-xl border border-violet-900/20 hover:border-violet-500/40 bg-stone-950/60 hover:bg-stone-900/80 transition-all duration-200 overflow-hidden"
             >
               <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none bg-[radial-gradient(ellipse_at_top_left,rgba(139,92,246,0.06),transparent_60%)]" />
@@ -124,10 +129,10 @@ export default function MultiplayerPanel({ worlds, activeSessions, currentUserId
                     )}
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className={`text-[10px] font-medium border rounded-full px-2 py-0.5 ${statusColor(session.status)}`}>
-                      {statusLabel(session.status)}
+                    <span className={`text-[10px] font-medium border rounded-full px-2 py-0.5 ${statusColor(session.status || 'lobby')}`}>
+                      {statusLabel(session.status || 'lobby')}
                     </span>
-                    <span className="text-xs text-foreground/40 font-mono">{session.invite_code}</span>
+                    <span className="text-xs text-foreground/40 font-mono">{session.invite_code || 'SIN-CODIGO'}</span>
                   </div>
                   <p className="text-xs text-foreground/30 mt-1 truncate">
                     Host: {session.profiles?.username || 'Desconocido'}
@@ -165,8 +170,8 @@ export default function MultiplayerPanel({ worlds, activeSessions, currentUserId
                     className="w-full bg-stone-900 border border-stone-700 rounded-lg px-3 py-2.5 text-sm text-parchment-200 focus:outline-none focus:border-violet-500 transition-colors cursor-pointer"
                   >
                     <option value="">Selecciona un mundo...</option>
-                    {safeWorlds.map(w => (
-                      <option key={w.id} value={w.id}>{w.name}</option>
+                    {safeWorlds.map((w) => (
+                      <option key={w.id} value={w.id}>{w.name || 'Mundo sin nombre'}</option>
                     ))}
                   </select>
                 )}

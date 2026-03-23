@@ -52,11 +52,13 @@ export default async function SessionPage({ params: paramsPromise }: { params: P
     .eq('world_id', session.world_id)
     .order('created_at', { ascending: false })
 
-  const typedSessionPlayers = ((sessionPlayers as unknown as SessionLobbyPlayer[] | null) ?? []).map((player) => ({
-    ...player,
-    profiles: Array.isArray(player.profiles) ? player.profiles[0] : player.profiles,
-    characters: Array.isArray(player.characters) ? player.characters[0] : player.characters,
-  }))
+  const typedSessionPlayers = ((sessionPlayers as unknown as SessionLobbyPlayer[] | null) ?? [])
+    .filter((player): player is SessionLobbyPlayer => Boolean(player && typeof player === 'object'))
+    .map((player) => ({
+      ...player,
+      profiles: Array.isArray(player.profiles) ? player.profiles[0] : player.profiles,
+      characters: Array.isArray(player.characters) ? player.characters[0] : player.characters,
+    }))
 
   const isHost = session.host_id === user.id
   const myPlayer = typedSessionPlayers.find((player) => player.user_id === user.id)

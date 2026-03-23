@@ -156,6 +156,10 @@ export default async function CharacterSheetPage({
     ? stats.custom_spells.filter((spell): spell is SpellEntry => Boolean(spell && typeof spell === 'object'))
     : []
 
+  const safeBackground = character.background && typeof character.background === 'object'
+    ? (character.background as any)
+    : null
+
   // Separate physical items from passive/magical AI traits
   const items = inventoryRaw.filter((item) => item.type !== 'passive')
   const passives = inventoryRaw.filter((item) => item.type === 'passive')
@@ -213,7 +217,7 @@ export default async function CharacterSheetPage({
                 {classValue}
               </span>
               <span className="bg-purple-900/40 text-purple-400 border border-purple-500/30 px-3 py-1 rounded-full uppercase tracking-wider">
-                {character.background?.name || stats.background || 'Aventurero'}
+                {safeBackground?.name || stats.background || 'Aventurero'}
               </span>
             </div>
           </div>
@@ -451,25 +455,25 @@ export default async function CharacterSheetPage({
                 <ScrollText className="w-5 h-5" /> Origen e Historia
               </h3>
               
-              {character.background && (
+              {safeBackground && (
                 <div className="bg-purple-900/10 border border-purple-500/20 rounded-xl p-5 mb-6">
-                  <h4 className="font-bold text-purple-400 mb-2">Trasfondo: {character.background.name}</h4>
+                  <h4 className="font-bold text-purple-400 mb-2">Trasfondo: {safeBackground.name || 'Sin nombre'}</h4>
                   <p className="text-sm text-foreground/80 leading-relaxed mb-4">
-                    {character.background.description}
+                    {safeBackground.description || 'Sin descripción'}
                   </p>
-                  {character.background.feature_name && (
+                  {safeBackground.feature_name && (
                     <div className="bg-purple-900/30 p-4 rounded-lg border border-purple-500/30">
                       <span className="text-[10px] uppercase font-bold text-purple-300 tracking-wider">Beneficio Exclusivo</span>
-                      <h5 className="font-bold text-white mb-2">{character.background.feature_name}</h5>
+                      <h5 className="font-bold text-white mb-2">{safeBackground.feature_name}</h5>
                       <p className="text-xs text-purple-100/70 leading-relaxed">
-                        {character.background.feature_description}
+                        {safeBackground.feature_description}
                       </p>
                     </div>
                   )}
                 </div>
               )}
 
-              {!character.background && !character.background_story && (
+              {!safeBackground && !character.background_story && (
                 <p className="text-sm text-foreground/50 italic mt-2">
                   Orígenes inciertos... La historia de este aventurero aún está por escribirse en las estrellas.
                 </p>

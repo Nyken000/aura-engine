@@ -85,12 +85,13 @@ function renderParticipantCard(
   index: number,
   isCurrentTurn: boolean,
 ) {
+  const safeName = participant.name || `Combatiente ${index + 1}`
   const hpPercent = Math.max(0, Math.min(100, (participant.hp / Math.max(participant.max_hp, 1)) * 100))
   const isDefeated = participant.is_defeated || participant.hp <= 0
 
   return (
     <div
-      key={participant.id ?? `${participant.name}-${index}`}
+      key={participant.id ?? `${safeName}-${index}`}
       className={`relative flex items-center justify-between overflow-hidden rounded-lg border bg-stone-900/40 p-3 transition-all ${isCurrentTurn
         ? 'border-amber-500/50 shadow-[0_0_15px_-3px_rgba(245,158,11,0.2)]'
         : isDefeated
@@ -117,7 +118,7 @@ function renderParticipantCard(
               className={`truncate font-serif text-sm tracking-wide ${isCurrentTurn ? 'text-amber-300' : 'text-stone-300'
                 }`}
             >
-              {participant.name}
+              {safeName}
             </span>
             {isDefeated ? (
               <span className="shrink-0 rounded border border-red-900/50 bg-red-950/50 px-1.5 py-px text-[9px] uppercase tracking-wider text-red-500">

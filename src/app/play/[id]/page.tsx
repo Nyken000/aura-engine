@@ -176,11 +176,13 @@ export default async function PlayPage({
       .eq('status', 'joined')
       .order('joined_at', { ascending: true })
 
-    sessionPlayers = (((players as unknown as SessionPlayerRecord[] | null) ?? [])).map((player) => ({
-      ...player,
-      profiles: Array.isArray(player.profiles) ? player.profiles[0] : player.profiles,
-      characters: Array.isArray(player.characters) ? player.characters[0] : player.characters,
-    }))
+    sessionPlayers = (((players as unknown as SessionPlayerRecord[] | null) ?? []))
+      .filter((player): player is SessionPlayerRecord => Boolean(player && typeof player === 'object'))
+      .map((player) => ({
+        ...player,
+        profiles: Array.isArray(player.profiles) ? player.profiles[0] : player.profiles,
+        characters: Array.isArray(player.characters) ? player.characters[0] : player.characters,
+      }))
 
     const { data: combat } = await supabase
       .from('session_combat_states')

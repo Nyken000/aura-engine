@@ -22,6 +22,11 @@ import type {
   SessionCombatState,
   SessionData,
   SessionPlayer,
+  NpcRelationship,
+  NpcRelationshipEvent,
+  SessionCompanion,
+  SessionQuest,
+  SessionQuestUpdate,
   WorldData,
 } from './types'
 
@@ -30,6 +35,11 @@ export default function GameClient({
   world,
   campaign,
   initialEvents,
+  initialSessionQuests,
+  initialSessionQuestUpdates,
+  initialNpcRelationships,
+  initialNpcRelationshipEvents,
+  initialSessionCompanions,
   currentUser,
   session,
   sessionPlayers,
@@ -39,6 +49,11 @@ export default function GameClient({
   world: WorldData | null
   campaign: Campaign | null
   initialEvents: NarrativeEvent[]
+  initialSessionQuests: SessionQuest[]
+  initialSessionQuestUpdates: SessionQuestUpdate[]
+  initialNpcRelationships: NpcRelationship[]
+  initialNpcRelationshipEvents: NpcRelationshipEvent[]
+  initialSessionCompanions: SessionCompanion[]
   currentUser: CurrentUser
   session?: SessionData | null
   sessionPlayers?: SessionPlayer[]
@@ -65,9 +80,25 @@ export default function GameClient({
     router,
   })
 
-  const { activeSessionPlayers, liveSession, liveSessionCombat } = useGameRealtime({
+  const {
+    activeSessionPlayers,
+    activeSessionQuests,
+    activeSessionQuestUpdates,
+    activeNpcRelationships,
+    activeNpcRelationshipEvents,
+    activeSessionCompanions,
+    liveSession,
+    liveSessionCombat,
+  } = useGameRealtime({
     supabase,
     sessionId,
+    initialCharacter: character,
+    initialEvents,
+    initialSessionQuests,
+    initialSessionQuestUpdates,
+    initialNpcRelationships,
+    initialNpcRelationshipEvents,
+    initialSessionCompanions,
     session,
     sessionPlayers,
     sessionCombatState,

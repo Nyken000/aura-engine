@@ -135,11 +135,13 @@ export default function SessionLobbyClient({
       return
     }
 
-    const nextPlayers = ((data as unknown as SessionPlayer[] | null) ?? []).map((player) => ({
-      ...player,
-      profiles: Array.isArray(player.profiles) ? player.profiles[0] : player.profiles,
-      characters: Array.isArray(player.characters) ? player.characters[0] : player.characters,
-    }))
+    const nextPlayers = ((data as unknown as SessionPlayer[] | null) ?? [])
+      .filter((player): player is SessionPlayer => Boolean(player && typeof player === 'object'))
+      .map((player) => ({
+        ...player,
+        profiles: Array.isArray(player.profiles) ? player.profiles[0] : player.profiles,
+        characters: Array.isArray(player.characters) ? player.characters[0] : player.characters,
+      }))
     setPlayers(nextPlayers)
 
     const mine = nextPlayers.find((player) => player.user_id === currentUser.id) ?? null
@@ -390,7 +392,7 @@ export default function SessionLobbyClient({
           </div>
 
           <div className="space-y-3">
-            {players.filter((p) => p !== null).map((player) => (
+            {players.filter((player) => Boolean(player && typeof player === 'object')).map((player) => (
               <div
                 key={player.id}
                 className={`relative border rounded-xl p-4 transition-all ${player.user_id === currentUser.id
@@ -498,7 +500,7 @@ export default function SessionLobbyClient({
               </h3>
 
               <div className="space-y-2">
-                {myCharacters.filter((c) => c !== null).map((character) => (
+                {myCharacters.filter((character) => Boolean(character && typeof character === 'object')).map((character) => (
                   <button
                     key={character.id}
                     onClick={() => handleSelectCharacter(character.id)}
