@@ -16,6 +16,7 @@ export type GameClientRuntimeState = {
 }
 
 export type StreamChunkPayload = {
+    chunk?: string
     text?: string
     done?: boolean
     fullText?: string
@@ -102,10 +103,13 @@ export function consumeAssistantStreamChunk(
     for (const line of lines) {
         if (!line.trim()) continue
 
+        const normalizedLine = line.startsWith('data:') ? line.slice(5).trim() : line.trim()
+        if (!normalizedLine) continue
+
         let parsed: StreamChunkPayload
 
         try {
-            parsed = JSON.parse(line) as StreamChunkPayload
+            parsed = JSON.parse(normalizedLine) as StreamChunkPayload
         } catch {
             continue
         }
@@ -121,11 +125,13 @@ export function consumeAssistantStreamChunk(
             continue
         }
 
-        if (parsed.text) {
+        const streamedText = parsed.chunk ?? parsed.text ?? ''
+
+        if (streamedText) {
             nextState = {
                 ...nextState,
                 isTyping: true,
-                typewriterText: `${nextState.typewriterText}${parsed.text}`,
+                typewriterText: `${nextState.typewriterText}${streamedText}`,
             }
         }
 

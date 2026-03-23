@@ -190,9 +190,11 @@ export default function GameClient({
       accumulated = chunks.pop() || ''
 
       for (const chunk of chunks) {
-        if (!chunk.trim()) continue
+        const normalizedChunk = chunk.startsWith('data:') ? chunk.slice(5).trim() : chunk.trim()
+        if (!normalizedChunk) continue
 
         let parsed: {
+          chunk?: string
           text?: string
           done?: boolean
           fullText?: string
@@ -201,13 +203,15 @@ export default function GameClient({
         }
 
         try {
-          parsed = JSON.parse(chunk)
+          parsed = JSON.parse(normalizedChunk)
         } catch {
           continue
         }
 
-        if (parsed.text) {
-          finalAssistantText += parsed.text
+        const streamedText = parsed.chunk ?? parsed.text ?? ''
+
+        if (streamedText) {
+          finalAssistantText += streamedText
           setTypewriterText(finalAssistantText)
         }
 
