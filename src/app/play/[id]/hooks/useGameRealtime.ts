@@ -576,7 +576,7 @@ export function useGameRealtime({
                     console.info(`Realtime subscribed: game:${sessionId}`)
                     return
                 }
- 
+
                 if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
                     console.warn(`Realtime status for game:${sessionId}:`, status)
                     void callbacksRef.current.refreshNarrativeEvents('channel_error')

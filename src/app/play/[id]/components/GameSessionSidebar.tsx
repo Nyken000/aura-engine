@@ -886,7 +886,7 @@ export function GameSessionSidebar({
                     </div>
                   </div>
                 ) : (
-                  liveSessionCombat?.participants?.map((participant, index) =>
+                  (liveSessionCombat?.participants?.filter(Boolean) || []).map((participant, index) =>
                     renderParticipantCard(participant, index, activeCombatParticipant?.id === participant.id),
                   )
                 )}

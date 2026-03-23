@@ -922,7 +922,7 @@ export default function CharacterCreationClient({
                             </div>
                           )}
                           <ul className="space-y-2">
-                            {oracleResult.equipment?.map((item: string, i: number) => (
+                            {oracleResult.equipment?.filter(Boolean).map((item: string, i: number) => (
                               <li key={i} className="text-xs text-parchment-300/80 p-2 rounded bg-black/30 border border-white/5 flex items-center gap-2">
                                 <span className="text-amber-600/50">▸</span> {item}
                               </li>
@@ -934,7 +934,7 @@ export default function CharacterCreationClient({
                           <div>
                             <h4 className="font-bold text-emerald-400 text-xs mb-2 uppercase tracking-wider">Rasgos Raciales</h4>
                             <ul className="space-y-1.5">
-                              {oracleResult.racial_traits.map((trait: string, i: number) => {
+                              {oracleResult.racial_traits.filter(Boolean).map((trait: string, i: number) => {
                                 const [name, ...descParts] = trait.split(':')
                                 const desc = descParts.join(':').trim()
 
@@ -976,7 +976,7 @@ export default function CharacterCreationClient({
                               )}
                             </div>
                             <ul className="space-y-1.5">
-                              {oracleSelectedSpells.map((spell: SpellDefinition, i: number) => (
+                              {oracleSelectedSpells.filter(Boolean).map((spell: SpellDefinition, i: number) => (
                                 <li key={i} className="text-[11px] text-foreground/70 bg-black/40 border border-white/5 rounded p-1.5 flex justify-between items-center">
                                   <span className="font-bold">{spell.name}</span>
                                   <span className="text-[9px] text-foreground/40">{spell.level}</span>
