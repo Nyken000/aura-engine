@@ -10,6 +10,7 @@ import type { DiceRollRequired } from '@/types/dice'
 import type { StructuredIntent } from '@/lib/game/structured-intents'
 import type { GameChatTab } from '../types'
 
+
 type UseGameStreamParams = {
   characterId: string
   sessionId: string | null
@@ -93,9 +94,15 @@ export function useGameStream({
 
   const sendMessage = useCallback(
     async (content: string, clientEventId?: string, intent?: StructuredIntent | null) => {
-      if (isSending) return
 
       setIsSending(true)
+
+      if (chatTab === 'adventure') {
+        setIsTyping(true)
+        setTypewriterText('')
+        setPendingDiceRoll(null)
+        setPendingAssistantClientEventId(null)
+      }
       try {
         const response = await fetch('/api/engine/stream', {
           method: 'POST',
@@ -110,6 +117,7 @@ export function useGameStream({
             channel: chatTab,
             intent,
           }),
+
         })
 
         await handleStreamResponse(response)
@@ -120,13 +128,15 @@ export function useGameStream({
         onRequestError?.(error)
       }
     },
-    [characterId, chatTab, handleStreamResponse, onRequestError, sessionId, isSending],
+    [characterId, chatTab, handleStreamResponse, onRequestError, sessionId],
   )
 
   const sendDiceResolution = useCallback(
     async (content: string) => {
       setPendingDiceRoll(null)
       setIsSending(true)
+      setIsTyping(true)
+      setTypewriterText('')
 
       try {
         const response = await fetch('/api/engine/stream', {

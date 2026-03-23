@@ -7,9 +7,53 @@ import {
   shouldRefreshTimelineGap,
   sortTimelineEvents,
 } from '../event-convergence'
-import type { GameChatTab, NarrativeEvent } from '../types'
+import type { GameChatTab, NarrativeEvent, SidebarSelection } from '../types'
 
-export function filterVisibleEvents(events: NarrativeEvent[], tab: GameChatTab) {
+function eventMatchesSidebarSelection(event: NarrativeEvent, selection: SidebarSelection) {
+  if (!selection) return true
+
+  const semantic = event.payload?.semantic
+
+  if (selection.type === 'quest') {
+    const upserts = semantic?.quests?.upserts ?? []
+    const updates = semantic?.quests?.updates ?? []
+
+    return (
+      upserts.some((quest) => quest.slug === selection.questSlug) ||
+      updates.some((update) => update.slug === selection.questSlug)
+    )
+  }
+
+  if (selection.type === 'relationship') {
+    const relationshipMatch =
+      semantic?.relationships?.some((relationship) => relationship.npcKey === selection.npcKey) ?? false
+
+    const entityMatch =
+      semantic?.entities?.some((entity) => entity.kind === 'npc' && entity.key === selection.npcKey) ?? false
+
+    const companionMatch =
+      semantic?.companions?.some((companion) => companion.npcKey === selection.npcKey) ?? false
+
+    return relationshipMatch || entityMatch || companionMatch
+  }
+
+  if (selection.type === 'entity') {
+    return (
+      semantic?.entities?.some(
+        (entity) =>
+          entity.kind === selection.entity.kind && entity.key === selection.entity.key,
+      ) ?? false
+    )
+  }
+
+  return true
+}
+
+export function filterVisibleEvents(
+  events: NarrativeEvent[],
+  tab: GameChatTab,
+  selection?: SidebarSelection,
+) {
   return events.filter((event) => {
     const isOoc =
       event.event_type === 'group_message' ||
@@ -26,17 +70,23 @@ export function filterVisibleEvents(events: NarrativeEvent[], tab: GameChatTab) 
     if (isHiddenSystemType) return false
     if (tab === 'group') return isOoc
 
-    return !isOoc
+    return !isOoc && (!selection || eventMatchesSidebarSelection(event, selection))
   })
 }
 
 type UseGameTimelineParams = {
   initialEvents: NarrativeEvent[]
   chatTab: GameChatTab
+  sidebarSelection?: SidebarSelection
   router: AppRouterInstance
 }
 
-export function useGameTimeline({ initialEvents, chatTab, router }: UseGameTimelineParams) {
+export function useGameTimeline({
+  initialEvents,
+  chatTab,
+  sidebarSelection,
+  router,
+}: UseGameTimelineParams) {
   const [events, setEvents] = useState<NarrativeEvent[]>(() => sortTimelineEvents(initialEvents || []))
 
   useEffect(() => {
@@ -63,7 +113,10 @@ export function useGameTimeline({ initialEvents, chatTab, router }: UseGameTimel
     setEvents((prev) => mergeTimelineEvent(prev, optimisticEvent))
   }, [])
 
-  const visibleEvents = useMemo(() => filterVisibleEvents(events, chatTab), [events, chatTab])
+  const visibleEvents = useMemo(
+    () => filterVisibleEvents(events, chatTab, sidebarSelection),
+    [events, chatTab, sidebarSelection],
+  )
 
   return {
     events,

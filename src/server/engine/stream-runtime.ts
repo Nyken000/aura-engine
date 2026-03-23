@@ -22,7 +22,6 @@ import {
 import type { SessionCombatTransitionEvent } from "@/server/combat/session-combat-transitions";
 import type {
     NarrativeSemanticPayload,
-    SemanticEntityKind,
 } from "@/server/world/world-state-types";
 import {
     buildGmOutputFormatInstructions,
@@ -31,7 +30,13 @@ import {
     type CombatUpdate,
 } from "@/server/engine/gm-output-contract";
 import {
-    summarizeStructuredIntent,
+    buildIntentAwareContent,
+    buildStructuredIntentPrompt,
+    deriveSemanticFromIntent,
+    mergeSemanticPayload,
+} from "@/server/engine/structured-intent-runtime";
+import {
+    isStructuredIntent,
     type StructuredIntent,
 } from "@/lib/game/structured-intents";
 import type { SessionAccessRecord } from "@/server/sessions/session-access";
@@ -99,7 +104,7 @@ type StreamRequestBody = {
     content?: string;
     sessionId?: string | null;
     clientEventId?: string | null;
-    channel: "adventure" | "group";
+    channel?: "adventure" | "group";
     intent?: StructuredIntent | null;
 };
 
@@ -219,153 +224,6 @@ function buildDiceResolutionPrompt(result: DiceRollOutcome): string {
 
 
 
-function safeArray<T>(value: T[] | null | undefined): T[] {
-    return Array.isArray(value) ? value : [];
-}
-
-function buildIntentAwareContent(params: {
-    content?: string | null;
-    intent?: StructuredIntent | null;
-}): string | null {
-    const content = params.content?.trim();
-
-    if (content) {
-        return content;
-    }
-
-    if (!params.intent) {
-        return null;
-    }
-
-    const prompt = params.intent.prompt?.trim();
-    if (prompt) {
-        return prompt;
-    }
-
-    return summarizeStructuredIntent(params.intent);
-}
-
-function buildStructuredIntentPrompt(intent: StructuredIntent | null): string {
-    if (!intent) return '';
-
-    const targetLines =
-        intent.target.kind === 'quest'
-            ? [
-                  `Objetivo: misión`,
-                  `Slug: ${intent.target.questSlug}`,
-                  `Título: ${intent.target.questTitle}`,
-                  intent.target.objectiveSummary
-                      ? `Resumen del objetivo: ${intent.target.objectiveSummary}`
-                      : null,
-                  intent.target.rewardSummary
-                      ? `Recompensa conocida: ${intent.target.rewardSummary}`
-                      : null,
-                  intent.target.offeredByNpcName
-                      ? `NPC relacionado: ${intent.target.offeredByNpcName}`
-                      : null,
-              ]
-            : intent.target.kind === 'relationship'
-              ? [
-                    `Objetivo: relación social`,
-                    `NPC: ${intent.target.npcName}`,
-                    `Clave NPC: ${intent.target.npcKey}`,
-                ]
-              : [
-                    `Objetivo: entidad del mundo`,
-                    `Tipo entidad: ${intent.target.entityKind}`,
-                    `Clave entidad: ${intent.target.entityKey}`,
-                    `Etiqueta: ${intent.target.entityLabel}`,
-                ];
-
-    return `
-ACCION ESTRUCTURADA DEL JUGADOR
-Tipo: ${intent.type}
-${targetLines.filter(Boolean).join("\n")}
-Instrucción: trata esta intención como una acción explícita y confiable del jugador. Debes responder de forma consistente con esta acción, actualizar la semántica correspondiente y evitar reinterpretarla como una sugerencia ambigua.
-`.trim();
-}
-
-function deriveSemanticFromIntent(intent: StructuredIntent | null): NarrativeSemanticPayload | null {
-    if (!intent) return null;
-
-    if (intent.target.kind === 'quest') {
-        const baseQuest = {
-            slug: intent.target.questSlug,
-            title: intent.target.questTitle,
-            description: intent.prompt ?? summarizeStructuredIntent(intent),
-            status:
-                intent.type === 'quest.accept'
-                    ? 'accepted'
-                    : intent.type === 'quest.decline'
-                      ? 'declined'
-                      : 'offered',
-            objectiveSummary: intent.target.objectiveSummary ?? null,
-            rewardSummary: intent.target.rewardSummary ?? null,
-            offeredByNpcKey: intent.target.offeredByNpcKey ?? null,
-            metadata: { source: 'structured_intent', intent_type: intent.type },
-        } as const;
-
-        if (intent.type === 'quest.negotiate') {
-            return {
-                entities: [],
-                quests: {
-                    upserts: [],
-                    updates: [
-                        {
-                            slug: intent.target.questSlug,
-                            updateType: 'note',
-                            title: `Negociación abierta: ${intent.target.questTitle}`,
-                            description: intent.prompt ?? summarizeStructuredIntent(intent),
-                            payload: { source: 'structured_intent', intent_type: intent.type },
-                        },
-                    ],
-                },
-            };
-        }
-
-        return {
-            entities: [],
-            quests: {
-                upserts: [baseQuest],
-                updates: [
-                    {
-                        slug: intent.target.questSlug,
-                        updateType: intent.type === 'quest.accept' ? 'accepted' : 'declined',
-                        title: intent.target.questTitle,
-                        description: intent.prompt ?? summarizeStructuredIntent(intent),
-                        payload: { source: 'structured_intent', intent_type: intent.type },
-                    },
-                ],
-            },
-        };
-    }
-
-    if (intent.target.kind === 'relationship') {
-        return {
-            entities: [{ kind: 'npc', key: intent.target.npcKey, label: intent.target.npcName }],
-            relationships: [
-                {
-                    npcKey: intent.target.npcKey,
-                    npcName: intent.target.npcName,
-                    favorDebtDelta: intent.type === 'relationship.collect_favor' ? -1 : 0,
-                    trustDelta: 0,
-                    reason: intent.prompt ?? summarizeStructuredIntent(intent),
-                    metadata: { source: 'structured_intent', intent_type: intent.type },
-                },
-            ],
-        };
-    }
-
-    return {
-        entities: [
-            {
-                kind: intent.target.entityKind === 'npc' ? 'npc' : intent.target.entityKind as SemanticEntityKind,
-                key: intent.target.entityKey,
-                label: intent.target.entityLabel,
-            },
-        ],
-    };
-}
 
 function buildPrompt(params: {
     character: CharacterRecord;
@@ -376,6 +234,7 @@ function buildPrompt(params: {
     relevantRules: RuleMatchRecord[];
     snapshot?: { quests: SessionQuestRow[]; relationships: NpcRelationshipRow[] } | null;
     systemPrompt?: string;
+    structuredIntent?: StructuredIntent | null;
 }): string {
     const {
         character,
@@ -386,6 +245,7 @@ function buildPrompt(params: {
         relevantRules,
         snapshot,
         systemPrompt,
+        structuredIntent,
     } = params;
 
     const stats = character.stats || {};
@@ -494,6 +354,8 @@ ${rulesBlock}
 HISTORIAL RECIENTE
 ${history || "Sin historial reciente."}
 
+${buildStructuredIntentPrompt(structuredIntent ?? null) || ""}
+
 MENSAJE DEL JUGADOR
 ${contentForModel}
 `.trim();
@@ -567,7 +429,7 @@ async function persistInboundNarrativeEvent(params: {
     normalizedClientEventId: string;
     parsedDiceResult: DiceRollOutcome | null;
     channel: "adventure" | "group";
-    intent?: StructuredIntent | null;
+    normalizedIntent: StructuredIntent | null;
 }): Promise<"ok" | "duplicate"> {
     const {
         repository,
@@ -577,6 +439,7 @@ async function persistInboundNarrativeEvent(params: {
         normalizedClientEventId,
         parsedDiceResult,
         channel,
+        normalizedIntent,
     } = params;
 
     try {
@@ -593,7 +456,7 @@ async function persistInboundNarrativeEvent(params: {
                     sender_name: character.name,
                     channel,
                     ...(parsedDiceResult ? { dice_result: parsedDiceResult } : {}),
-                    ...(params.intent ? { intent: params.intent } : {}),
+                    ...(normalizedIntent ? { intent: normalizedIntent } : {}),
                 } as JsonObject),
                 dice_roll_required: null,
             },
@@ -702,11 +565,11 @@ export async function processEngineStream(params: {
         return Response.json({ error: "No autorizado" }, { status: 401 });
     }
 
-    const { characterId, content, sessionId, clientEventId, channel, intent } = body;
+    const normalizedIntent = isStructuredIntent(body.intent) ? body.intent : null;
+    const { characterId, sessionId, clientEventId, channel } = body;
+    const content = buildIntentAwareContent({ content: body.content, intent: normalizedIntent });
 
-    const userMessage = buildIntentAwareContent({ content, intent });
-
-    if (!characterId || !userMessage) {
+    if (!characterId || !content) {
         return Response.json({ error: "Faltan parámetros" }, { status: 400 });
     }
 
@@ -726,9 +589,6 @@ export async function processEngineStream(params: {
     const normalizedClientEventId = clientEventId ?? randomUUID();
     const normalizedChannel: "adventure" | "group" = channel === "group" ? "group" : "adventure";
 
-    // 4. Derivar la semántica inicial de la intención
-    const derivedSemantic = deriveSemanticFromIntent(intent ?? null);
-
     if (normalizedChannel === "group" && !normalizedSessionId) {
         return Response.json({ error: "El canal grupal requiere una sesión activa" }, { status: 400 });
     }
@@ -736,26 +596,6 @@ export async function processEngineStream(params: {
     let joinedSessionMembership: SessionAccessRecord | null = null;
 
     if (normalizedSessionId) {
-        // 1. Resolver el contenido base (priorizar intent si no hay input manual)
-        // NOTE: 'intent' is not defined in the provided context. Assuming it should be part of 'body' or a new parameter.
-        // For now, I'll assume it's meant to be accessed from 'body' if it were there, or is a placeholder.
-        // As per instruction, I'm inserting the code as given, which might introduce a reference error for 'intent'.
-        // If 'intent' is meant to be part of 'body', the destructuring of 'body' would need to be updated.
-        // For faithful insertion, I'll insert it as is.
-        // const userMessage = buildIntentAwareContent({ content, intent });
-        // if (!userMessage) {
-        //     throw new Error("Se requiere contenido o una intención estructurada");
-        // }
-
-        // 2. Construir el prompt del sistema incluyendo la intención si existe
-        // const intentPrompt = buildStructuredIntentPrompt(intent);
-
-        // 3. Obtener el snapshot inicial
-        // const snapshot = await repository.getSessionSnapshot(sessionId);
-
-        // 4. Derivar la semántica inicial de la intención
-        // const derivedSemantic = deriveSemanticFromIntent(intent);
-
         joinedSessionMembership = await repository.getJoinedSessionMembership(normalizedSessionId, userId);
 
         if (!joinedSessionMembership) {
@@ -777,10 +617,10 @@ export async function processEngineStream(params: {
         }
     }
 
-    const parsedDiceResult = parseDiceResultMarker(userMessage);
+    const parsedDiceResult = parseDiceResultMarker(content);
     const contentForModel = parsedDiceResult
         ? buildDiceResolutionPrompt(parsedDiceResult)
-        : userMessage;
+        : content;
 
     logger?.('data_fetching_start');
     const start = Date.now();
@@ -818,19 +658,23 @@ export async function processEngineStream(params: {
     const persistedInboundEvent = await persistInboundNarrativeEvent({
         repository,
         character,
-        content: userMessage,
+        content,
         normalizedSessionId,
         normalizedClientEventId,
         parsedDiceResult,
         channel: normalizedChannel,
-        intent: intent ?? null,
+        normalizedIntent,
     });
 
     if (persistedInboundEvent === "duplicate") {
         return Response.json({ ok: true, duplicate: true, system_only: true });
     }
 
-    const initMatch = userMessage.match(/\[SISTEMA_INICIATIVA:\s*(\d+)\]/);
+    if (normalizedChannel === "group") {
+        return Response.json({ ok: true, system_only: true });
+    }
+
+    const initMatch = content.match(/\[SISTEMA_INICIATIVA:\s*(\d+)\]/);
     if (initMatch && currentCombatState.in_combat) {
         const rolledInit = Number.parseInt(initMatch[1], 10);
 
@@ -887,7 +731,7 @@ export async function processEngineStream(params: {
         return Response.json({ ok: true, system_only: true });
     }
 
-    const nextTurnMatch = userMessage.match(/\[SISTEMA_TURNO_SIGUIENTE\]/);
+    const nextTurnMatch = content.match(/\[SISTEMA_TURNO_SIGUIENTE\]/);
     if (nextTurnMatch && currentCombatState.in_combat) {
         if (normalizedSessionId && sessionCombatState?.status === "active") {
             const { combatState, activeParticipant } =
@@ -927,11 +771,11 @@ export async function processEngineStream(params: {
         return Response.json({ ok: true, system_only: true });
     }
 
-    const snapshot = normalizedSessionId 
+    const snapshot = normalizedSessionId
         ? await repository.getSessionSnapshot(normalizedSessionId)
         : null;
 
-    const intentPrompt = buildStructuredIntentPrompt(intent ?? null);
+    const intentPrompt = buildStructuredIntentPrompt(normalizedIntent ?? null);
     const gmInstructions = buildGmOutputFormatInstructions();
 
     const fullSystemPrompt = [
@@ -956,6 +800,7 @@ export async function processEngineStream(params: {
                         relevantRules,
                         snapshot,
                         systemPrompt: fullSystemPrompt,
+                        structuredIntent: normalizedIntent,
                     }),
                 });
 
@@ -979,7 +824,10 @@ export async function processEngineStream(params: {
                     validationErrors,
                 } = parseGmStructuredOutput(fullResponse);
 
-                const semantic = mergeSemanticPayload(gmSemantic, derivedSemantic);
+                const resolvedSemantic = mergeSemanticPayload(
+                    gmSemantic,
+                    deriveSemanticFromIntent(normalizedIntent),
+                );
 
                 if (validationErrors.length > 0) {
                     console.warn("GM output contract validation issues:", validationErrors);
@@ -1016,19 +864,25 @@ export async function processEngineStream(params: {
                         content: narrative,
                         session_id: normalizedSessionId,
                         client_event_id: assistantClientEventId,
-                        event_type: "gm_message",
-                        payload: semantic ? ({ semantic } as JsonObject) : null,
+                        event_type: "narrative_update",
+                        payload:
+                            resolvedSemantic || normalizedIntent
+                                ? ({
+                                      ...(resolvedSemantic ? { semantic: resolvedSemantic } : {}),
+                                      ...(normalizedIntent ? { intent: normalizedIntent } : {}),
+                                  } as JsonObject)
+                                : null,
                         dice_roll_required: normalizeDiceRollRequestForEvent(diceRollRequired),
                     },
                 ]);
 
-                if (normalizedSessionId && semantic) {
+                if (normalizedSessionId && resolvedSemantic) {
                     await repository.persistNarrativeSemantic({
                         sessionId: normalizedSessionId,
                         worldId: character.worlds?.id ?? null,
                         characterId: character.id,
                         sourceEventId: assistantEventId,
-                        semantic,
+                        semantic: resolvedSemantic,
                     });
                 }
 
@@ -1202,46 +1056,6 @@ export function registerSessionInitiative(params: {
     };
 }
 
-function mergeUniqueByKey<T>(items: T[], key: (item: T) => string): T[] {
-    const map = new Map<string, T>();
-
-    for (const item of items) {
-        map.set(key(item), item);
-    }
-
-    return [...map.values()];
-}
-
-function mergeSemanticPayload(
-    base: NarrativeSemanticPayload | null,
-    derived: NarrativeSemanticPayload | null,
-): NarrativeSemanticPayload | null {
-    if (!base && !derived) return null;
-    if (!base) return derived;
-    if (!derived) return base;
-
-    return {
-        entities: mergeUniqueByKey(
-            [...safeArray(base.entities), ...safeArray(derived.entities)],
-            (item) => `${item.kind}:${item.key}`,
-        ),
-        quests: {
-            upserts: mergeUniqueByKey(
-                [...safeArray(base.quests?.upserts), ...safeArray(derived.quests?.upserts)],
-                (item) => item.slug,
-            ),
-            updates: mergeUniqueByKey(
-                [...safeArray(base.quests?.updates), ...safeArray(derived.quests?.updates)],
-                (item) => `${item.slug}:${item.updateType}:${item.title}`,
-            ),
-        },
-        relationships: mergeUniqueByKey(
-            [...safeArray(base.relationships), ...safeArray(derived.relationships)],
-            (item) => `${item.npcKey}:${item.reason}`,
-        ),
-        companions: mergeUniqueByKey(
-            [...safeArray(base.companions), ...safeArray(derived.companions)],
-            (item) => `${item.npcKey}:${item.action}`,
-        ),
-    };
+function safeArray<T>(value: T[] | null | undefined): T[] {
+  return Array.isArray(value) ? value : [];
 }

@@ -35,71 +35,12 @@ import type {
 } from '../types'
 import { GameAccordionSection } from './GameAccordionSection'
 import { GameContextActions } from './GameContextActions'
-import type { StructuredIntent } from '@/lib/game/structured-intents'
+import {
+  buildQuestIntent,
+  buildRelationshipIntent,
+  buildEntityIntent,
+} from '@/lib/game/structured-intents'
 
-function buildQuestIntent(
-  type: 'quest.accept' | 'quest.decline' | 'quest.negotiate',
-  quest: SessionQuest,
-): StructuredIntent {
-  return {
-    type,
-    target: {
-      kind: 'quest',
-      questSlug: quest.slug,
-      questTitle: quest.title,
-      objectiveSummary: quest.objective_summary ?? null,
-      rewardSummary: quest.reward_summary ?? null,
-      offeredByNpcKey: quest.offered_by_npc_key ?? null,
-    },
-    prompt:
-      type === 'quest.accept'
-        ? `Acepto la misión "${quest.title}".`
-        : type === 'quest.decline'
-          ? `Rechazo la misión "${quest.title}".`
-          : `Estoy dispuesto a aceptar "${quest.title}", pero quiero negociar la recompensa.`,
-  }
-}
-
-function buildRelationshipIntent(
-  type: 'relationship.ask_help' | 'relationship.collect_favor',
-  relationship: NpcRelationship,
-): StructuredIntent {
-  return {
-    type,
-    target: {
-      kind: 'relationship',
-      npcKey: relationship.npc_key,
-      npcName: relationship.npc_name,
-    },
-    prompt:
-      type === 'relationship.ask_help'
-        ? `Quiero pedirle ayuda a ${relationship.npc_name} para nuestra situación actual.`
-        : `Quiero recordarle a ${relationship.npc_name} que me debe un favor.`,
-  }
-}
-
-function buildEntityIntent(
-  type: 'entity.travel' | 'entity.investigate' | 'entity.inspect' | 'faction.approach',
-  entity: SemanticEntityAnnotation,
-): StructuredIntent {
-  return {
-    type,
-    target: {
-      kind: 'entity',
-      entityKind: entity.kind === 'npc' ? 'npc' : entity.kind,
-      entityKey: entity.key,
-      entityLabel: entity.label,
-    },
-    prompt:
-      type === 'entity.travel'
-        ? `Quiero dirigirme hacia ${entity.label}.`
-        : type === 'entity.investigate'
-          ? `Quiero investigar más sobre ${entity.label}.`
-          : type === 'faction.approach'
-            ? `Quiero acercarme a la facción ${entity.label} con cautela.`
-            : `Quiero inspeccionar ${entity.label} con detalle.`,
-  }
-}
 
 function sortNarrativeEvents(events: NarrativeEvent[]) {
   return [...events].sort((a, b) => {
@@ -151,10 +92,10 @@ function renderParticipantCard(
     <div
       key={participant.id ?? `${participant.name}-${index}`}
       className={`relative flex items-center justify-between overflow-hidden rounded-lg border bg-stone-900/40 p-3 transition-all ${isCurrentTurn
-          ? 'border-amber-500/50 shadow-[0_0_15px_-3px_rgba(245,158,11,0.2)]'
-          : isDefeated
-            ? 'border-red-900/30 opacity-60 grayscale'
-            : 'border-stone-800/80'
+        ? 'border-amber-500/50 shadow-[0_0_15px_-3px_rgba(245,158,11,0.2)]'
+        : isDefeated
+          ? 'border-red-900/30 opacity-60 grayscale'
+          : 'border-stone-800/80'
         }`}
     >
       <div
@@ -316,40 +257,33 @@ function getEntitySummary(
 }
 
 function buildQuestActions(quest: SessionQuest): QuickAction[] {
+  const actions: QuickAction[] = []
+
   if (quest.status === 'offered') {
-    return [
+    actions.push(
       {
-        id: `quest-accept-${quest.id}`,
+        id: `quest-accept-${quest.slug}`,
         label: 'Aceptar',
         prompt: `Acepto la misión "${quest.title}".`,
         intent: buildQuestIntent('quest.accept', quest),
         tone: 'emerald',
       },
       {
-        id: `quest-negotiate-${quest.id}`,
+        id: `quest-negotiate-${quest.slug}`,
         label: 'Negociar',
         prompt: `Estoy dispuesto a aceptar "${quest.title}", pero quiero negociar la recompensa.`,
         intent: buildQuestIntent('quest.negotiate', quest),
         tone: 'amber',
       },
       {
-        id: `quest-decline-${quest.id}`,
+        id: `quest-decline-${quest.slug}`,
         label: 'Rechazar',
         prompt: `Rechazo la misión "${quest.title}".`,
         intent: buildQuestIntent('quest.decline', quest),
         tone: 'stone',
       },
-    ]
+    )
   }
-
-  const actions: QuickAction[] = [
-    {
-      id: `quest-talk-${quest.slug}`,
-      label: 'Hablar sobre esto',
-      prompt: `Quiero hablar sobre la misión "${quest.title}".`,
-      tone: 'violet',
-    },
-  ]
 
   if (quest.status === 'accepted' || quest.status === 'active') {
     actions.push(
@@ -414,10 +348,8 @@ function buildRelationshipActions(relationship: NpcRelationship): QuickAction[] 
 }
 
 function buildEntityActions(entity: SemanticEntityAnnotation): QuickAction[] {
-  const actions: QuickAction[] = []
-
   if (entity.kind === 'location') {
-    actions.push(
+    return [
       {
         id: `entity-travel-${entity.key}`,
         label: 'Viajar',
@@ -432,15 +364,16 @@ function buildEntityActions(entity: SemanticEntityAnnotation): QuickAction[] {
         intent: buildEntityIntent('entity.investigate', entity),
         tone: 'amber',
       },
-    )
+    ]
   }
 
   if (entity.kind === 'item') {
-    actions.push(
+    return [
       {
         id: `entity-inspect-${entity.key}`,
         label: 'Inspeccionar',
         prompt: `Quiero inspeccionar ${entity.label} con detalle.`,
+        intent: buildEntityIntent('entity.inspect', entity),
         tone: 'violet',
       },
       {
@@ -449,7 +382,7 @@ function buildEntityActions(entity: SemanticEntityAnnotation): QuickAction[] {
         prompt: `Quiero intentar conseguir ${entity.label}.`,
         tone: 'emerald',
       },
-    )
+    ]
   }
 
   if (entity.kind === 'faction') {
@@ -464,6 +397,7 @@ function buildEntityActions(entity: SemanticEntityAnnotation): QuickAction[] {
         id: `entity-approach-${entity.key}`,
         label: 'Acercarme',
         prompt: `Quiero acercarme a la facción ${entity.label} con cautela.`,
+        intent: buildEntityIntent('faction.approach', entity),
         tone: 'amber',
       },
     ]
@@ -476,6 +410,13 @@ function buildEntityActions(entity: SemanticEntityAnnotation): QuickAction[] {
         label: 'Priorizar',
         prompt: `Quiero centrarme ahora en el objetivo ${entity.label}.`,
         tone: 'amber',
+      },
+      {
+        id: `entity-investigate-${entity.key}`,
+        label: 'Investigar',
+        prompt: `Quiero investigar más sobre ${entity.label}.`,
+        intent: buildEntityIntent('entity.investigate', entity),
+        tone: 'sky',
       },
     ]
   }

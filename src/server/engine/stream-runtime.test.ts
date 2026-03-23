@@ -12,6 +12,8 @@ import {
     type NarrativeEventRow,
     type PersistCombatEventsParams,
     type PersistCombatEventsResult,
+    SessionQuestRow,
+    NpcRelationshipRow,
     type RuleMatchRecord,
 } from "./stream-runtime";
 import {
@@ -230,7 +232,7 @@ class FakeEngineStreamRepository implements EngineStreamRepository {
         return result;
     }
 
-    async getSessionSnapshot(_sessionId: string): Promise<{ quests: any[]; relationships: any[] }> {
+    async getSessionSnapshot(): Promise<{ quests: SessionQuestRow[]; relationships: NpcRelationshipRow[] }> {
         return { quests: [], relationships: [] };
     }
 }

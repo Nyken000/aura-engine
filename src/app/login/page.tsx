@@ -1,17 +1,18 @@
 import AuthClient from './AuthClient'
 
-export default function LoginPage({
+export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: { message: string }
+  searchParams: Promise<{ message?: string }>
 }) {
+  const params = await searchParams
+
   return (
     <main className="min-h-screen bg-[#0d0a07] relative overflow-hidden flex flex-col items-center justify-center p-6">
-      {/* Background magical elements */}
-      <div className="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] bg-amber-600/10 blur-[120px] rounded-full pointer-events-none mix-blend-screen" />
-      <div className="absolute bottom-[-10%] right-[-10%] w-[60%] h-[60%] bg-red-900/10 blur-[150px] rounded-full pointer-events-none mix-blend-screen" />
+      <div className="absolute top-[-10%] left-[-10%] h-[50%] w-[50%] rounded-full bg-amber-600/10 blur-[120px] pointer-events-none mix-blend-screen" />
+      <div className="absolute bottom-[-10%] right-[-10%] h-[60%] w-[60%] rounded-full bg-red-900/10 blur-[150px] rounded-full pointer-events-none mix-blend-screen" />
 
-      <AuthClient message={searchParams?.message} />
+      <AuthClient message={params?.message} />
     </main>
   )
 }

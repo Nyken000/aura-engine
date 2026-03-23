@@ -3,6 +3,7 @@ import type { StructuredIntent } from '@/lib/game/structured-intents'
 
 export type GameChatTab = 'adventure' | 'group'
 
+
 export type NarrativeFilter =
   | 'all'
   | 'quests'
@@ -351,6 +352,7 @@ export type QuickAction = {
 }
 
 export type WorldAlert =
+
   | {
     id: string
     kind: 'quest'

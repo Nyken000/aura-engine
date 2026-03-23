@@ -20,13 +20,13 @@ type RealtimeClient = ReturnType<typeof import('@/utils/supabase/client').create
 
 type UseGameRealtimeParams = {
     supabase: RealtimeClient
-    initialCharacter: CharacterSheet
-    initialEvents: NarrativeEvent[]
-    initialSessionQuests: SessionQuest[]
-    initialSessionQuestUpdates: SessionQuestUpdate[]
-    initialNpcRelationships: NpcRelationship[]
-    initialNpcRelationshipEvents: NpcRelationshipEvent[]
-    initialSessionCompanions: SessionCompanion[]
+    initialCharacter?: CharacterSheet
+    initialEvents?: NarrativeEvent[]
+    initialSessionQuests?: SessionQuest[]
+    initialSessionQuestUpdates?: SessionQuestUpdate[]
+    initialNpcRelationships?: NpcRelationship[]
+    initialNpcRelationshipEvents?: NpcRelationshipEvent[]
+    initialSessionCompanions?: SessionCompanion[]
     sessionId: string | null
     session: SessionData | null | undefined
     sessionPlayers: SessionPlayer[] | undefined
@@ -79,9 +79,13 @@ export function useGameRealtime({
     const [liveSessionCombat, setLiveSessionCombat] = useState<SessionCombatState | null>(
         sessionCombatState || null,
     )
-    const [character, setCharacter] = useState<CharacterSheet>(initialCharacter)
-    const [events, setEvents] = useState<NarrativeEvent[]>(initialEvents)
+    const [character, setCharacter] = useState<CharacterSheet | undefined>(initialCharacter)
+    const [events, setEvents] = useState<NarrativeEvent[]>(initialEvents || [])
+    const sessionRef = useRef(session)
 
+    useEffect(() => {
+        sessionRef.current = session
+    }, [session])
     const lastNarrativeRefreshAtRef = useRef<number>(0)
 
     const mergeNarrativeEvent = useCallback(
@@ -146,11 +150,15 @@ export function useGameRealtime({
     )
 
     useEffect(() => {
-        setEvents(initialEvents)
+        if (initialEvents) {
+            setEvents(initialEvents)
+        }
     }, [initialEvents])
 
     useEffect(() => {
-        setCharacter(initialCharacter)
+        if (initialCharacter) {
+            setCharacter(initialCharacter)
+        }
     }, [initialCharacter])
 
     useEffect(() => {
@@ -285,13 +293,13 @@ export function useGameRealtime({
     }, [sessionId, supabase, router])
 
     const refreshNpcRelationships = useCallback(async () => {
-        if (!sessionId || !initialCharacter.id) return
+        if (!sessionId || !character?.id) return
 
         const { data, error } = await supabase
             .from('npc_relationships')
             .select('*')
             .eq('session_id', sessionId)
-            .eq('character_id', initialCharacter.id)
+            .eq('character_id', character.id)
             .order('updated_at', { ascending: false })
 
         if (error) {
@@ -301,16 +309,16 @@ export function useGameRealtime({
         }
 
         setActiveNpcRelationships((data as NpcRelationship[] | null) ?? [])
-    }, [sessionId, supabase, router, initialCharacter.id])
+    }, [sessionId, supabase, router, character?.id])
 
     const refreshNpcRelationshipEvents = useCallback(async () => {
-        if (!sessionId || !initialCharacter.id) return
+        if (!sessionId || !character?.id) return
 
         const { data, error } = await supabase
             .from('npc_relationship_events')
             .select('*')
             .eq('session_id', sessionId)
-            .eq('character_id', initialCharacter.id)
+            .eq('character_id', character.id)
             .order('created_at', { ascending: false })
 
         if (error) {
@@ -320,7 +328,7 @@ export function useGameRealtime({
         }
 
         setActiveNpcRelationshipEvents((data as NpcRelationshipEvent[] | null) ?? [])
-    }, [sessionId, supabase, router, initialCharacter.id])
+    }, [sessionId, supabase, router, character?.id])
 
     const refreshSessionCompanions = useCallback(async () => {
         if (!sessionId) return
@@ -389,6 +397,40 @@ export function useGameRealtime({
         }
     }, [sessionId, refreshNarrativeEvents])
 
+    // Using a ref for callbacks to keep the realtime subscription effect stable
+    const callbacksRef = useRef({
+        handleNarrativeEvent,
+        refreshSessionPlayers,
+        refreshNarrativeEvents,
+        refreshSessionQuests,
+        refreshSessionQuestUpdates,
+        refreshNpcRelationships,
+        refreshNpcRelationshipEvents,
+        refreshSessionCompanions,
+    })
+
+    useEffect(() => {
+        callbacksRef.current = {
+            handleNarrativeEvent,
+            refreshSessionPlayers,
+            refreshNarrativeEvents,
+            refreshSessionQuests,
+            refreshSessionQuestUpdates,
+            refreshNpcRelationships,
+            refreshNpcRelationshipEvents,
+            refreshSessionCompanions,
+        }
+    }, [
+        handleNarrativeEvent,
+        refreshSessionPlayers,
+        refreshNarrativeEvents,
+        refreshSessionQuests,
+        refreshSessionQuestUpdates,
+        refreshNpcRelationships,
+        refreshNpcRelationshipEvents,
+        refreshSessionCompanions,
+    ])
+
     useEffect(() => {
         if (!sessionId) return
 
@@ -404,7 +446,7 @@ export function useGameRealtime({
                 },
                 (payload: RealtimeInsertPayload<NarrativeEvent>) => {
                     console.info('Realtime narrative INSERT:', payload.new.id)
-                    handleNarrativeEvent(payload.new)
+                    callbacksRef.current.handleNarrativeEvent(payload.new)
                 },
             )
             .on(
@@ -417,7 +459,7 @@ export function useGameRealtime({
                 },
                 (payload: RealtimeUpdatePayload<NarrativeEvent>) => {
                     console.info('Realtime narrative UPDATE:', payload.new.id)
-                    handleNarrativeEvent(payload.new)
+                    callbacksRef.current.handleNarrativeEvent(payload.new)
                 },
             )
             .on(
@@ -429,7 +471,7 @@ export function useGameRealtime({
                     filter: `id=eq.${sessionId}`,
                 },
                 (payload: RealtimeUpdatePayload<SessionData>) => {
-                    setLiveSession((prev) => ({ ...(prev || session || null), ...payload.new }))
+                    setLiveSession((prev) => ({ ...(prev || sessionRef.current || ({} as SessionData)), ...payload.new }))
                 },
             )
             .on(
@@ -465,8 +507,8 @@ export function useGameRealtime({
                     filter: `session_id=eq.${sessionId}`,
                 },
                 () => {
-                    void refreshSessionPlayers()
-                    void refreshNarrativeEvents('session_players')
+                    void callbacksRef.current.refreshSessionPlayers()
+                    void callbacksRef.current.refreshNarrativeEvents('session_players')
                 },
             )
             .on(
@@ -478,7 +520,7 @@ export function useGameRealtime({
                     filter: `session_id=eq.${sessionId}`,
                 },
                 () => {
-                    void refreshSessionQuests()
+                    void callbacksRef.current.refreshSessionQuests()
                 },
             )
             .on(
@@ -490,7 +532,7 @@ export function useGameRealtime({
                     filter: `session_id=eq.${sessionId}`,
                 },
                 () => {
-                    void refreshSessionQuestUpdates()
+                    void callbacksRef.current.refreshSessionQuestUpdates()
                 },
             )
             .on(
@@ -502,7 +544,7 @@ export function useGameRealtime({
                     filter: `session_id=eq.${sessionId}`,
                 },
                 () => {
-                    void refreshNpcRelationships()
+                    void callbacksRef.current.refreshNpcRelationships()
                 },
             )
             .on(
@@ -514,7 +556,7 @@ export function useGameRealtime({
                     filter: `session_id=eq.${sessionId}`,
                 },
                 () => {
-                    void refreshNpcRelationshipEvents()
+                    void callbacksRef.current.refreshNpcRelationshipEvents()
                 },
             )
             .on(
@@ -526,7 +568,7 @@ export function useGameRealtime({
                     filter: `session_id=eq.${sessionId}`,
                 },
                 () => {
-                    void refreshSessionCompanions()
+                    void callbacksRef.current.refreshSessionCompanions()
                 },
             )
             .subscribe((status) => {
@@ -534,10 +576,10 @@ export function useGameRealtime({
                     console.info(`Realtime subscribed: game:${sessionId}`)
                     return
                 }
-
+ 
                 if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
                     console.warn(`Realtime status for game:${sessionId}:`, status)
-                    void refreshNarrativeEvents('channel_error')
+                    void callbacksRef.current.refreshNarrativeEvents('channel_error')
                 }
             })
 
@@ -548,14 +590,6 @@ export function useGameRealtime({
         sessionId,
         session,
         supabase,
-        handleNarrativeEvent,
-        refreshSessionPlayers,
-        refreshNarrativeEvents,
-        refreshSessionQuests,
-        refreshSessionQuestUpdates,
-        refreshNpcRelationships,
-        refreshNpcRelationshipEvents,
-        refreshSessionCompanions,
     ])
 
     return {

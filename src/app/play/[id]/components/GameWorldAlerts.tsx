@@ -1,7 +1,7 @@
 'use client'
 
 import { Bell, HeartHandshake, ScrollText, Shield } from 'lucide-react'
-import type { SidebarSelection, WorldAlert } from '../types'
+import type { ComposerActionRequest, SidebarSelection, WorldAlert } from '../types'
 
 function getTone(alert: WorldAlert) {
     if (alert.kind === 'quest') {
@@ -37,7 +37,7 @@ export function GameWorldAlerts({
 }: {
     alerts: WorldAlert[]
     onSelect: (selection: SidebarSelection) => void
-    onUsePrompt: (prompt: string) => void
+    onUsePrompt: (action: string | ComposerActionRequest) => void
 }) {
     if (alerts.length === 0) return null
 
@@ -78,7 +78,7 @@ export function GameWorldAlerts({
                             {alert.prompt ? (
                                 <button
                                     type="button"
-                                    onClick={() => onUsePrompt(alert.prompt!)}
+                                    onClick={() => onUsePrompt({ prompt: alert.prompt!, intent: alert.intent, chatTab: 'adventure' })}
                                     className={`rounded-lg border px-3 py-2 text-[10px] uppercase tracking-[0.22em] transition ${tone.border} ${tone.text} hover:bg-stone-900/40`}
                                 >
                                     Usar sugerencia

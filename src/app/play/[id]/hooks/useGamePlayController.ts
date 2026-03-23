@@ -18,6 +18,7 @@ import type {
 import type { StructuredIntent } from '@/lib/game/structured-intents'
 
 type UseGamePlayControllerParams = {
+
   character: CharacterSheet
   currentUserId: string
   sessionId: string | null
@@ -35,6 +36,7 @@ type UseGamePlayControllerParams = {
     intent?: StructuredIntent | null,
   ) => Promise<void>
   sendDiceResolution: (content: string) => Promise<void>
+
   onInvalidGroupChannel?: () => void
 }
 
@@ -82,7 +84,8 @@ export function useGamePlayController({
     const targetChatTab = normalizedAction.chatTab ?? 'adventure'
     const message = normalizedAction.prompt.trim()
 
-    if (!message || isSending) return
+    const isAdventureBlocked = targetChatTab === 'adventure' && isSending
+    if (!message || isAdventureBlocked) return
 
     if (targetChatTab === 'group' && !sessionId) {
       console.error('El chat grupal requiere una sesión activa')
@@ -118,6 +121,7 @@ export function useGamePlayController({
     await submitAction({ prompt: inputText, chatTab })
   }
 
+
   const handleDiceResult = async (result: DiceRollOutcome) => {
     if (!pendingDiceRoll) return
 
@@ -138,3 +142,4 @@ export function useGamePlayController({
     submitAction,
   }
 }
+

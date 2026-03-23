@@ -22,19 +22,12 @@ import { GameSessionSidebar } from './GameSessionSidebar'
 import type { DiceRollOutcome, DiceRollRequired } from '@/types/dice'
 import type {
   CharacterSheet,
-  ComposerActionRequest,
   GameChatTab,
   NarrativeEvent,
-  NpcRelationship,
-  NpcRelationshipEvent,
   SessionCombatParticipant,
   SessionCombatState,
-  SessionCompanion,
   SessionData,
   SessionPlayer,
-  SessionQuest,
-  SessionQuestUpdate,
-  SidebarSelection,
   WorldAlert,
   WorldData,
 } from '../types'
@@ -70,75 +63,14 @@ function getCampaignDescription(campaign: Campaign | null): string | null {
     : null
 }
 
-function buildWorldAlerts({
-  quests,
-  relationships,
-  companions,
-}: {
-  quests: SessionQuest[]
-  relationships: NpcRelationship[]
-  companions: SessionCompanion[]
-}): WorldAlert[] {
-  const alerts: WorldAlert[] = []
-
-  const offeredQuest = quests.find((quest) => quest.status === 'offered')
-  if (offeredQuest) {
-    alerts.push({
-      id: `quest-${offeredQuest.slug}`,
-      kind: 'quest',
-      title: 'Encargo pendiente',
-      detail: `${offeredQuest.title} sigue esperando una respuesta clara del grupo.`,
-      actionLabel: 'Ver misión',
-      selection: { type: 'quest', questSlug: offeredQuest.slug },
-      prompt: `Quiero responder al encargo "${offeredQuest.title}".`,
-    })
-  }
-
-  const tenseRelationship = relationships.find(
-    (relationship) => relationship.hostility >= 3 || relationship.trust <= -3,
-  )
-  if (tenseRelationship) {
-    alerts.push({
-      id: `social-${tenseRelationship.npc_key}`,
-      kind: 'social',
-      title: 'Tensión social',
-      detail: `${tenseRelationship.npc_name} mantiene una relación delicada contigo. Conviene manejarla con cuidado.`,
-      actionLabel: 'Ver vínculo',
-      selection: { type: 'relationship', npcKey: tenseRelationship.npc_key },
-      prompt: `Quiero hablar con ${tenseRelationship.npc_name} para calmar la tensión entre nosotros.`,
-    })
-  }
-
-  const joinedCompanion = companions.find((companion) => companion.status === 'joined')
-  if (joinedCompanion) {
-    alerts.push({
-      id: `companion-${joinedCompanion.npc_key}`,
-      kind: 'companion',
-      title: 'Aliado disponible',
-      detail: `${joinedCompanion.npc_name} está presente y puede intervenir si se le da un rol claro.`,
-      actionLabel: 'Ver aliado',
-      selection: { type: 'relationship', npcKey: joinedCompanion.npc_key },
-      prompt: `Quiero pedirle a ${joinedCompanion.npc_name} que me ayude con el siguiente paso.`,
-    })
-  }
-
-  return alerts.slice(0, 3)
-}
-
 export function GameLayoutShell({
   character,
   world,
   campaign,
-  allEvents,
   visibleEvents,
   currentUserId,
   liveSession,
   activeSessionPlayers,
-  activeSessionQuests,
-  activeSessionQuestUpdates,
-  activeNpcRelationships,
-  activeNpcRelationshipEvents,
-  activeSessionCompanions,
   liveSessionCombat,
   activeCombatParticipant,
   isWaitingForInitiative,
@@ -154,24 +86,16 @@ export function GameLayoutShell({
   pendingDiceRoll,
   onSubmit,
   onDiceResult,
-  onQuestAction,
-  sidebarSelection,
-  onSidebarSelectionChange,
   chatEndRef,
+  chatScrollRef,
 }: {
   character: CharacterSheet
   world: WorldData | null
   campaign: Campaign | null
-  allEvents: NarrativeEvent[]
   visibleEvents: NarrativeEvent[]
   currentUserId: string
   liveSession: SessionData | null
   activeSessionPlayers: SessionPlayer[]
-  activeSessionQuests: SessionQuest[]
-  activeSessionQuestUpdates: SessionQuestUpdate[]
-  activeNpcRelationships: NpcRelationship[]
-  activeNpcRelationshipEvents: NpcRelationshipEvent[]
-  activeSessionCompanions: SessionCompanion[]
   liveSessionCombat: SessionCombatState | null
   activeCombatParticipant: SessionCombatParticipant | null
   isWaitingForInitiative: boolean
@@ -187,25 +111,15 @@ export function GameLayoutShell({
   pendingDiceRoll: DiceRollRequired | null
   onSubmit: (event: FormEvent<HTMLFormElement>) => Promise<void> | void
   onDiceResult: (result: DiceRollOutcome) => Promise<void> | void
-  onQuestAction: (action: string | ComposerActionRequest) => void
-  sidebarSelection: SidebarSelection
-  onSidebarSelectionChange: (selection: SidebarSelection) => void
   chatEndRef: RefObject<HTMLDivElement | null>
+  chatScrollRef: RefObject<HTMLDivElement | null>
 }) {
   const campaignTheme = campaign ? CAMPAIGN_THEME[campaign.id] : null
   const canSendAdventureMessage = !isWaitingForInitiative && isMyTurn
   const isSoloMode = !liveSession
   const campaignDescription = useMemo(() => getCampaignDescription(campaign), [campaign])
 
-  const worldAlerts = useMemo(
-    () =>
-      buildWorldAlerts({
-        quests: activeSessionQuests,
-        relationships: activeNpcRelationships,
-        companions: activeSessionCompanions,
-      }),
-    [activeSessionQuests, activeNpcRelationships, activeSessionCompanions],
-  )
+  const worldAlerts: WorldAlert[] = []
 
   const [leftSidebarOpen, setLeftSidebarOpen] = useState(false)
   const [rightSidebarOpen, setRightSidebarOpen] = useState(false)
@@ -306,8 +220,8 @@ export function GameLayoutShell({
                     type="button"
                     onClick={() => onChatTabChange('adventure')}
                     className={`inline-flex flex-1 items-center justify-center gap-2 px-6 py-2 text-xs uppercase tracking-widest transition-all sm:flex-none ${chatTab === 'adventure'
-                        ? 'bg-stone-800 font-medium text-amber-400'
-                        : 'text-stone-500 hover:bg-stone-800/50 hover:text-stone-300'
+                      ? 'bg-stone-800 font-medium text-amber-400'
+                      : 'text-stone-500 hover:bg-stone-800/50 hover:text-stone-300'
                       }`}
                   >
                     <ScrollText className="h-3.5 w-3.5" />
@@ -322,10 +236,10 @@ export function GameLayoutShell({
                     }}
                     disabled={!liveSession}
                     className={`inline-flex flex-1 items-center justify-center gap-2 border-l border-stone-800 px-6 py-2 text-sm transition sm:flex-none ${!liveSession
-                        ? 'cursor-not-allowed text-stone-600/50'
-                        : chatTab === 'group'
-                          ? 'bg-white/10 font-medium text-white'
-                          : 'text-stone-500 hover:bg-white/5 hover:text-white'
+                      ? 'cursor-not-allowed text-stone-600/50'
+                      : chatTab === 'group'
+                        ? 'bg-white/10 font-medium text-white'
+                        : 'text-stone-500 hover:bg-white/5 hover:text-white'
                       }`}
                   >
                     <Users className="h-4 w-4" />
@@ -349,8 +263,8 @@ export function GameLayoutShell({
               <div className="px-4 pt-4 md:px-8">
                 <GameWorldAlerts
                   alerts={worldAlerts}
-                  onSelect={onSidebarSelectionChange}
-                  onUsePrompt={onQuestAction}
+                  onSelect={() => {}}
+                  onUsePrompt={() => {}}
                 />
               </div>
 
@@ -360,12 +274,10 @@ export function GameLayoutShell({
                 isTyping={isTyping}
                 typewriterText={typewriterText}
                 chatEndRef={chatEndRef}
+                scrollContainerRef={chatScrollRef}
                 pendingDiceRoll={pendingDiceRoll}
                 onDiceResult={onDiceResult}
                 isSending={isSending}
-                onQuestAction={onQuestAction}
-                onSidebarSelectionChange={onSidebarSelectionChange}
-                activeSessionQuests={activeSessionQuests}
               />
             </div>
 
@@ -393,23 +305,27 @@ export function GameLayoutShell({
                         : 'Mensaje fuera del personaje para el grupo...'
                     }
                     className={`custom-scrollbar w-full resize-none rounded-xl border bg-stone-950/80 px-4 py-3 text-sm leading-relaxed text-stone-200 transition-all duration-300 placeholder:text-stone-600 focus:bg-stone-900 focus:outline-none ${chatTab === 'group'
-                        ? 'border-sky-900/40 ring-0 focus:border-sky-700/60'
-                        : 'border-stone-800 ring-0 focus:border-amber-900/60'
+                      ? 'border-sky-900/40 ring-0 focus:border-sky-700/60'
+                      : 'border-stone-800 ring-0 focus:border-amber-900/60'
                       }`}
-                    disabled={isSending || (chatTab === 'adventure' && !canSendAdventureMessage) || !!pendingDiceRoll}
+                    disabled={
+                      (chatTab === 'adventure' && isSending) ||
+                      (chatTab === 'adventure' && !canSendAdventureMessage) ||
+                      !!pendingDiceRoll
+                    }
                   />
 
                   <button
                     type="submit"
                     disabled={
                       !inputText.trim() ||
-                      isSending ||
+                      (chatTab === 'adventure' && isSending) ||
                       (chatTab === 'adventure' && !canSendAdventureMessage) ||
                       !!pendingDiceRoll
                     }
                     className={`flex shrink-0 items-center justify-center rounded-xl p-3.5 transition-all duration-300 disabled:cursor-not-allowed disabled:opacity-30 ${chatTab === 'group'
-                        ? 'bg-sky-900/60 text-sky-200 hover:bg-sky-800'
-                        : 'border border-stone-700 bg-stone-800 text-amber-400 hover:bg-stone-700 hover:text-amber-300'
+                      ? 'bg-sky-900/60 text-sky-200 hover:bg-sky-800'
+                      : 'border border-stone-700 bg-stone-800 text-amber-400 hover:bg-stone-700 hover:text-amber-300'
                       }`}
                   >
                     <Send className="h-5 w-5" />
@@ -435,20 +351,20 @@ export function GameLayoutShell({
               campaignDescription={campaignDescription}
               world={world}
               characterName={character.name}
-              narrativeEvents={allEvents}
+              narrativeEvents={visibleEvents}
               activeSessionPlayers={activeSessionPlayers}
-              activeSessionQuests={activeSessionQuests}
-              activeSessionQuestUpdates={activeSessionQuestUpdates}
-              activeNpcRelationships={activeNpcRelationships}
-              activeNpcRelationshipEvents={activeNpcRelationshipEvents}
-              activeSessionCompanions={activeSessionCompanions}
+              activeSessionQuests={[]}
+              activeSessionQuestUpdates={[]}
+              activeNpcRelationships={[]}
+              activeNpcRelationshipEvents={[]}
+              activeSessionCompanions={[]}
               liveSessionCombat={liveSessionCombat}
               activeCombatParticipant={activeCombatParticipant}
               currentUserId={currentUserId}
               isWaitingForInitiative={isWaitingForInitiative}
-              selection={sidebarSelection}
-              onSelectionChange={onSidebarSelectionChange}
-              onUsePrompt={onQuestAction}
+              selection={null}
+              onSelectionChange={() => {}}
+              onUsePrompt={() => {}}
             />
           </div>
         </div>
