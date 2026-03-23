@@ -229,6 +229,10 @@ class FakeEngineStreamRepository implements EngineStreamRepository {
 
         return result;
     }
+
+    async getSessionSnapshot(_sessionId: string): Promise<{ quests: any[]; relationships: any[] }> {
+        return { quests: [], relationships: [] };
+    }
 }
 
 class ConcurrentDuplicateRepository extends FakeEngineStreamRepository {
@@ -429,6 +433,7 @@ test("stream runtime persists tactical events, character HP sync and shared part
         modelGateway,
         userId: "user-1",
         body: {
+            channel: "adventure" as const,
             characterId: "char-1",
             content: "Ataco al capitán goblin.",
             sessionId: "session-1",
@@ -506,6 +511,7 @@ test("stream runtime marks combat as ended when combat_events resolves the encou
         modelGateway,
         userId: "user-1",
         body: {
+            channel: "adventure" as const,
             characterId: "char-1",
             content: "Remato al último goblin.",
             sessionId: "session-1",
@@ -557,6 +563,7 @@ test("stream runtime requests dice roll when the model asks for it", async () =>
         modelGateway,
         userId: "user-1",
         body: {
+            channel: "adventure" as const,
             characterId: "char-1",
             content: "Intento abrir la puerta.",
             clientEventId: "client-event-3",
@@ -611,6 +618,7 @@ test("stream runtime applies hp and inventory changes outside session combat", a
         modelGateway,
         userId: "user-1",
         body: {
+            channel: "adventure" as const,
             characterId: "char-1",
             content: "Bebo una poción y reviso el cofre.",
             clientEventId: "client-event-4",
@@ -680,6 +688,7 @@ test("stream runtime creates local combat state when the model starts combat out
         modelGateway,
         userId: "user-1",
         body: {
+            channel: "adventure" as const,
             characterId: "char-1",
             content: "Avanzo por el sendero del bosque.",
             clientEventId: "client-event-5",
@@ -749,6 +758,7 @@ test("stream runtime advances shared session turn only on explicit system marker
         modelGateway,
         userId: "user-1",
         body: {
+            channel: "adventure" as const,
             characterId: "char-1",
             content: "[SISTEMA_TURNO_SIGUIENTE]",
             sessionId: "session-1",
@@ -835,6 +845,7 @@ test("stream runtime registers initiative in shared session state", async () => 
         modelGateway,
         userId: "user-1",
         body: {
+            channel: "adventure" as const,
             characterId: "char-1",
             content: "[SISTEMA_INICIATIVA: 15]",
             sessionId: "session-1",
@@ -857,9 +868,9 @@ test("stream runtime enforces security boundaries and character binding", async 
             modelGateway,
             userId: "user-1",
             body: {
+                channel: "group",
                 characterId: "char-1",
                 content: "Hola grupo",
-                channel: "group",
                 sessionId: null, // No session
             },
         });
@@ -877,6 +888,7 @@ test("stream runtime enforces security boundaries and character binding", async 
             modelGateway,
             userId: "user-1",
             body: {
+                channel: "adventure" as const,
                 characterId: "char-1",
                 content: "Hola",
                 sessionId: "session-1",
@@ -898,6 +910,7 @@ test("stream runtime enforces security boundaries and character binding", async 
             modelGateway,
             userId: "user-1",
             body: {
+                channel: "adventure" as const,
                 characterId: "char-1", // Using char-1 but session expects char-OTHER
                 content: "Hola",
                 sessionId: "session-1",
@@ -919,6 +932,7 @@ test("stream runtime enforces security boundaries and character binding", async 
             modelGateway,
             userId: "user-1",
             body: {
+                channel: "adventure" as const,
                 characterId: "char-1",
                 content: "Hola",
                 sessionId: "session-1",
@@ -964,6 +978,7 @@ test("stream runtime detects duplicate session client_event_id before inserting"
         modelGateway,
         userId: "user-1",
         body: {
+            channel: "adventure" as const,
             characterId: "char-1",
             content: "Mensaje duplicado",
             sessionId: "session-1",
@@ -1010,6 +1025,7 @@ test("stream runtime tolerates concurrent duplicate insert races via unique cons
         modelGateway,
         userId: "user-1",
         body: {
+            channel: "adventure" as const,
             characterId: "char-1",
             content: "Ataco al objetivo.",
             sessionId: "session-1",
@@ -1024,6 +1040,7 @@ test("stream runtime tolerates concurrent duplicate insert races via unique cons
         modelGateway,
         userId: "user-1",
         body: {
+            channel: "adventure" as const,
             characterId: "char-1",
             content: "Ataco al objetivo.",
             sessionId: "session-1",
@@ -1097,6 +1114,7 @@ test("stream runtime resolves persisted dice results without asking for another 
         modelGateway,
         userId: "user-1",
         body: {
+            channel: "adventure" as const,
             characterId: "char-1",
             content:
                 'Intento abrir la cerradura. [DICE_RESULT: {"stat":"dex","skill":"lockpicking","total":18,"dc":15,"success":true,"critical":null}]',
@@ -1174,6 +1192,7 @@ test("stream runtime does not start model stream for explicit turn advancement m
         modelGateway,
         userId: "user-1",
         body: {
+            channel: "adventure" as const,
             characterId: "char-1",
             content: "[SISTEMA_TURNO_SIGUIENTE]",
             sessionId: "session-1",
@@ -1203,6 +1222,7 @@ test("stream runtime emits model errors through SSE payload", async () => {
         modelGateway,
         userId: "user-1",
         body: {
+            channel: "adventure" as const,
             characterId: "char-1",
             content: "Exploro la cueva.",
             clientEventId: "client-event-error-1",
@@ -1258,6 +1278,7 @@ test("stream runtime discards invalid structured mechanics while preserving vali
         modelGateway,
         userId: "user-1",
         body: {
+            channel: "adventure" as const,
             characterId: "char-1",
             content: "Fuerzo la cerradura bajo presión.",
             sessionId: "session-1",
@@ -1290,6 +1311,7 @@ test("stream runtime falls back to narrative-only mode when model returns non-js
         modelGateway,
         userId: "user-1",
         body: {
+            channel: "adventure" as const,
             characterId: "char-1",
             content: "Avanzo entre la niebla.",
             clientEventId: "client-non-json-1",

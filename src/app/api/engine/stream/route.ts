@@ -130,6 +130,18 @@ function createSupabaseEngineStreamRepository(
       return (data as SessionCombatStateRecord | null) ?? null
     },
 
+    async getSessionSnapshot(sessionId) {
+      const [{ data: quests }, { data: relationships }] = await Promise.all([
+        supabase.from('session_quests').select('*').eq('session_id', sessionId),
+        supabase.from('npc_relationships').select('*').eq('session_id', sessionId),
+      ])
+
+      return {
+        quests: quests ?? [],
+        relationships: relationships ?? [],
+      }
+    },
+
     async searchRelevantRules(content) {
       try {
         const matches = await searchRelevantRuleBookChunks({

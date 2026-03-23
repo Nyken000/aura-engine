@@ -22,6 +22,7 @@ import { GameSessionSidebar } from './GameSessionSidebar'
 import type { DiceRollOutcome, DiceRollRequired } from '@/types/dice'
 import type {
   CharacterSheet,
+  ComposerActionRequest,
   GameChatTab,
   NarrativeEvent,
   NpcRelationship,
@@ -34,8 +35,10 @@ import type {
   SessionQuest,
   SessionQuestUpdate,
   SidebarSelection,
+  WorldAlert,
   WorldData,
 } from '../types'
+import { GameWorldAlerts } from './GameWorldAlerts'
 
 const CAMPAIGN_THEME: Record<string, { badge: string; label: string }> = {
   'oakhaven-fall': {
@@ -65,6 +68,61 @@ function getCampaignDescription(campaign: Campaign | null): string | null {
   return 'description' in campaign && typeof campaign.description === 'string'
     ? campaign.description
     : null
+}
+
+function buildWorldAlerts({
+  quests,
+  relationships,
+  companions,
+}: {
+  quests: SessionQuest[]
+  relationships: NpcRelationship[]
+  companions: SessionCompanion[]
+}): WorldAlert[] {
+  const alerts: WorldAlert[] = []
+
+  const offeredQuest = quests.find((quest) => quest.status === 'offered')
+  if (offeredQuest) {
+    alerts.push({
+      id: `quest-${offeredQuest.slug}`,
+      kind: 'quest',
+      title: 'Encargo pendiente',
+      detail: `${offeredQuest.title} sigue esperando una respuesta clara del grupo.`,
+      actionLabel: 'Ver misión',
+      selection: { type: 'quest', questSlug: offeredQuest.slug },
+      prompt: `Quiero responder al encargo "${offeredQuest.title}".`,
+    })
+  }
+
+  const tenseRelationship = relationships.find(
+    (relationship) => relationship.hostility >= 3 || relationship.trust <= -3,
+  )
+  if (tenseRelationship) {
+    alerts.push({
+      id: `social-${tenseRelationship.npc_key}`,
+      kind: 'social',
+      title: 'Tensión social',
+      detail: `${tenseRelationship.npc_name} mantiene una relación delicada contigo. Conviene manejarla con cuidado.`,
+      actionLabel: 'Ver vínculo',
+      selection: { type: 'relationship', npcKey: tenseRelationship.npc_key },
+      prompt: `Quiero hablar con ${tenseRelationship.npc_name} para calmar la tensión entre nosotros.`,
+    })
+  }
+
+  const joinedCompanion = companions.find((companion) => companion.status === 'joined')
+  if (joinedCompanion) {
+    alerts.push({
+      id: `companion-${joinedCompanion.npc_key}`,
+      kind: 'companion',
+      title: 'Aliado disponible',
+      detail: `${joinedCompanion.npc_name} está presente y puede intervenir si se le da un rol claro.`,
+      actionLabel: 'Ver aliado',
+      selection: { type: 'relationship', npcKey: joinedCompanion.npc_key },
+      prompt: `Quiero pedirle a ${joinedCompanion.npc_name} que me ayude con el siguiente paso.`,
+    })
+  }
+
+  return alerts.slice(0, 3)
 }
 
 export function GameLayoutShell({
@@ -129,7 +187,7 @@ export function GameLayoutShell({
   pendingDiceRoll: DiceRollRequired | null
   onSubmit: (event: FormEvent<HTMLFormElement>) => Promise<void> | void
   onDiceResult: (result: DiceRollOutcome) => Promise<void> | void
-  onQuestAction: (text: string) => void
+  onQuestAction: (action: string | ComposerActionRequest) => void
   sidebarSelection: SidebarSelection
   onSidebarSelectionChange: (selection: SidebarSelection) => void
   chatEndRef: RefObject<HTMLDivElement | null>
@@ -138,6 +196,16 @@ export function GameLayoutShell({
   const canSendAdventureMessage = !isWaitingForInitiative && isMyTurn
   const isSoloMode = !liveSession
   const campaignDescription = useMemo(() => getCampaignDescription(campaign), [campaign])
+
+  const worldAlerts = useMemo(
+    () =>
+      buildWorldAlerts({
+        quests: activeSessionQuests,
+        relationships: activeNpcRelationships,
+        companions: activeSessionCompanions,
+      }),
+    [activeSessionQuests, activeNpcRelationships, activeSessionCompanions],
+  )
 
   const [leftSidebarOpen, setLeftSidebarOpen] = useState(false)
   const [rightSidebarOpen, setRightSidebarOpen] = useState(false)
@@ -278,6 +346,14 @@ export function GameLayoutShell({
             </header>
 
             <div className="relative flex w-full max-w-4xl flex-1 flex-col overflow-hidden">
+              <div className="px-4 pt-4 md:px-8">
+                <GameWorldAlerts
+                  alerts={worldAlerts}
+                  onSelect={onSidebarSelectionChange}
+                  onUsePrompt={onQuestAction}
+                />
+              </div>
+
               <GameNarrativeFeed
                 visibleEvents={visibleEvents}
                 character={character}
@@ -372,6 +448,7 @@ export function GameLayoutShell({
               isWaitingForInitiative={isWaitingForInitiative}
               selection={sidebarSelection}
               onSelectionChange={onSidebarSelectionChange}
+              onUsePrompt={onQuestAction}
             />
           </div>
         </div>

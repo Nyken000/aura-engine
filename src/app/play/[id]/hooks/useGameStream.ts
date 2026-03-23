@@ -7,6 +7,7 @@ import {
   createGameClientRuntimeState,
 } from '../game-client-runtime'
 import type { DiceRollRequired } from '@/types/dice'
+import type { StructuredIntent } from '@/lib/game/structured-intents'
 import type { GameChatTab } from '../types'
 
 type UseGameStreamParams = {
@@ -91,9 +92,10 @@ export function useGameStream({
   )
 
   const sendMessage = useCallback(
-    async (content: string, clientEventId?: string) => {
-      setIsSending(true)
+    async (content: string, clientEventId?: string, intent?: StructuredIntent | null) => {
+      if (isSending) return
 
+      setIsSending(true)
       try {
         const response = await fetch('/api/engine/stream', {
           method: 'POST',
@@ -101,11 +103,12 @@ export function useGameStream({
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            content,
             characterId,
+            content,
             sessionId,
             clientEventId,
             channel: chatTab,
+            intent,
           }),
         })
 
@@ -117,7 +120,7 @@ export function useGameStream({
         onRequestError?.(error)
       }
     },
-    [characterId, chatTab, handleStreamResponse, onRequestError, sessionId],
+    [characterId, chatTab, handleStreamResponse, onRequestError, sessionId, isSending],
   )
 
   const sendDiceResolution = useCallback(

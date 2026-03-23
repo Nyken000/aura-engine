@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { AppRouterInstance } from 'next/dist/shared/lib/app-router-context.shared-runtime'
 
 import type {
@@ -33,6 +33,16 @@ type UseGameRealtimeParams = {
     sessionCombatState: SessionCombatState | null | undefined
     router: AppRouterInstance
     onNarrativeEvent?: (event: NarrativeEvent) => void
+}
+
+const NARRATIVE_POLL_INTERVAL_MS = 1500
+
+function sortNarrativeEvents(a: NarrativeEvent, b: NarrativeEvent) {
+    const indexA = a.event_index ?? Number.MAX_SAFE_INTEGER
+    const indexB = b.event_index ?? Number.MAX_SAFE_INTEGER
+
+    if (indexA !== indexB) return indexA - indexB
+    return new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
 }
 
 export function useGameRealtime({
@@ -72,25 +82,67 @@ export function useGameRealtime({
     const [character, setCharacter] = useState<CharacterSheet>(initialCharacter)
     const [events, setEvents] = useState<NarrativeEvent[]>(initialEvents)
 
-    const appendOptimisticEvent = useCallback((event: NarrativeEvent) => {
-        setEvents((prev) => [...prev, event])
-    }, [])
+    const lastNarrativeRefreshAtRef = useRef<number>(0)
+
+    const mergeNarrativeEvent = useCallback(
+        (prev: NarrativeEvent[], event: NarrativeEvent) => {
+            const existingIndex = prev.findIndex(
+                (entry) =>
+                    entry.id === event.id ||
+                    (event.client_event_id &&
+                        entry.client_event_id &&
+                        entry.client_event_id === event.client_event_id),
+            )
+
+            if (existingIndex >= 0) {
+                const next = [...prev]
+                next[existingIndex] = {
+                    ...next[existingIndex],
+                    ...event,
+                }
+
+                return next.sort(sortNarrativeEvents)
+            }
+
+            return [...prev, event].sort(sortNarrativeEvents)
+        },
+        [],
+    )
+
+    const appendOptimisticEvent = useCallback(
+        (event: NarrativeEvent) => {
+            setEvents((prev) => mergeNarrativeEvent(prev, event))
+        },
+        [mergeNarrativeEvent],
+    )
 
     const handleNarrativeEvent = useCallback(
         (event: NarrativeEvent) => {
             onNarrativeEvent?.(event)
-            setEvents((prev) => {
-                if (prev.some((e) => e.id === event.id)) return prev
-                return [...prev, event].sort((a, b) => {
-                    const indexA = a.event_index ?? Number.MAX_SAFE_INTEGER
-                    const indexB = b.event_index ?? Number.MAX_SAFE_INTEGER
+            setEvents((prev) => mergeNarrativeEvent(prev, event))
+        },
+        [mergeNarrativeEvent, onNarrativeEvent],
+    )
 
-                    if (indexA !== indexB) return indexA - indexB
-                    return new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-                })
+    const applyNarrativeSnapshot = useCallback(
+        (snapshot: NarrativeEvent[]) => {
+            if (snapshot.length === 0) return
+
+            snapshot.forEach((event) => {
+                onNarrativeEvent?.(event)
+            })
+
+            setEvents((prev) => {
+                let next = prev
+
+                for (const event of snapshot) {
+                    next = mergeNarrativeEvent(next, event)
+                }
+
+                return next
             })
         },
-        [onNarrativeEvent],
+        [mergeNarrativeEvent, onNarrativeEvent],
     )
 
     useEffect(() => {
@@ -139,8 +191,8 @@ export function useGameRealtime({
         const { data, error } = await supabase
             .from('session_players')
             .select(
-        'id, user_id, status, character_id, selected_character_name, selected_character_stats, selected_character_hp_current, selected_character_hp_max, profiles!user_id(id, username, avatar_url), characters(id, name, stats, hp_current, hp_max)',
-      )
+                'id, user_id, status, character_id, selected_character_name, selected_character_stats, selected_character_hp_current, selected_character_hp_max, profiles!user_id(id, username, avatar_url), characters(id, name, stats, hp_current, hp_max)',
+            )
             .eq('session_id', sessionId)
             .eq('status', 'joined')
             .order('joined_at', { ascending: true })
@@ -151,12 +203,50 @@ export function useGameRealtime({
             return
         }
 
-        setActiveSessionPlayers((((data as unknown as SessionPlayer[] | null) ?? [])).map((player) => ({
-          ...player,
-          profiles: Array.isArray(player.profiles) ? player.profiles[0] : player.profiles,
-          characters: Array.isArray(player.characters) ? player.characters[0] : player.characters,
-        })))
+        setActiveSessionPlayers(
+            (((data as unknown as SessionPlayer[] | null) ?? [])).map((player) => ({
+                ...player,
+                profiles: Array.isArray(player.profiles) ? player.profiles[0] : player.profiles,
+                characters: Array.isArray(player.characters) ? player.characters[0] : player.characters,
+            })),
+        )
     }, [sessionId, supabase, router])
+
+    const refreshNarrativeEvents = useCallback(
+        async (
+            reason:
+                | 'mount'
+                | 'poll'
+                | 'focus'
+                | 'visibility'
+                | 'channel_error'
+                | 'session_players',
+        ) => {
+            if (!sessionId) return
+
+            const now = Date.now()
+            if (reason === 'poll' && now - lastNarrativeRefreshAtRef.current < NARRATIVE_POLL_INTERVAL_MS - 100) {
+                return
+            }
+
+            lastNarrativeRefreshAtRef.current = now
+
+            const { data, error } = await supabase
+                .from('narrative_events')
+                .select('*')
+                .eq('session_id', sessionId)
+                .order('event_index', { ascending: true, nullsFirst: false })
+                .order('created_at', { ascending: true })
+
+            if (error) {
+                console.error(`Failed to refresh narrative events (${reason}):`, error)
+                return
+            }
+
+            applyNarrativeSnapshot((data as NarrativeEvent[] | null) ?? [])
+        },
+        [sessionId, supabase, applyNarrativeSnapshot],
+    )
 
     const refreshSessionQuests = useCallback(async () => {
         if (!sessionId) return
@@ -255,6 +345,7 @@ export function useGameRealtime({
         if (!sessionId) return
 
         void refreshSessionPlayers()
+        void refreshNarrativeEvents('mount')
         void refreshSessionQuests()
         void refreshSessionQuestUpdates()
         void refreshNpcRelationships()
@@ -263,12 +354,40 @@ export function useGameRealtime({
     }, [
         sessionId,
         refreshSessionPlayers,
+        refreshNarrativeEvents,
         refreshSessionQuests,
         refreshSessionQuestUpdates,
         refreshNpcRelationships,
         refreshNpcRelationshipEvents,
         refreshSessionCompanions,
     ])
+
+    useEffect(() => {
+        if (!sessionId) return
+
+        const intervalId = window.setInterval(() => {
+            void refreshNarrativeEvents('poll')
+        }, NARRATIVE_POLL_INTERVAL_MS)
+
+        const handleWindowFocus = () => {
+            void refreshNarrativeEvents('focus')
+        }
+
+        const handleVisibilityChange = () => {
+            if (document.visibilityState === 'visible') {
+                void refreshNarrativeEvents('visibility')
+            }
+        }
+
+        window.addEventListener('focus', handleWindowFocus)
+        document.addEventListener('visibilitychange', handleVisibilityChange)
+
+        return () => {
+            window.clearInterval(intervalId)
+            window.removeEventListener('focus', handleWindowFocus)
+            document.removeEventListener('visibilitychange', handleVisibilityChange)
+        }
+    }, [sessionId, refreshNarrativeEvents])
 
     useEffect(() => {
         if (!sessionId) return
@@ -284,6 +403,7 @@ export function useGameRealtime({
                     filter: `session_id=eq.${sessionId}`,
                 },
                 (payload: RealtimeInsertPayload<NarrativeEvent>) => {
+                    console.info('Realtime narrative INSERT:', payload.new.id)
                     handleNarrativeEvent(payload.new)
                 },
             )
@@ -296,6 +416,7 @@ export function useGameRealtime({
                     filter: `session_id=eq.${sessionId}`,
                 },
                 (payload: RealtimeUpdatePayload<NarrativeEvent>) => {
+                    console.info('Realtime narrative UPDATE:', payload.new.id)
                     handleNarrativeEvent(payload.new)
                 },
             )
@@ -345,6 +466,7 @@ export function useGameRealtime({
                 },
                 () => {
                     void refreshSessionPlayers()
+                    void refreshNarrativeEvents('session_players')
                 },
             )
             .on(
@@ -415,6 +537,7 @@ export function useGameRealtime({
 
                 if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
                     console.warn(`Realtime status for game:${sessionId}:`, status)
+                    void refreshNarrativeEvents('channel_error')
                 }
             })
 
@@ -427,6 +550,7 @@ export function useGameRealtime({
         supabase,
         handleNarrativeEvent,
         refreshSessionPlayers,
+        refreshNarrativeEvents,
         refreshSessionQuests,
         refreshSessionQuestUpdates,
         refreshNpcRelationships,

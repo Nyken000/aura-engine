@@ -75,20 +75,6 @@ type NarrativeEventRecord = {
   } | null
 }
 
-type SessionPlayerProfileRecord = {
-  id: string
-  username: string | null
-  avatar_url: string | null
-}
-
-type SessionPlayerCharacterRecord = {
-  id: string
-  name: string
-  stats?: Record<string, unknown> | null
-  hp_current: number
-  hp_max: number
-}
-
 type InsertedOpeningRecord = {
   id: string
   role: 'user' | 'assistant' | 'system'

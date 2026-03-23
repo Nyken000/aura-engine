@@ -10,13 +10,18 @@ import {
   Shield,
   Swords,
   Users,
+  Package,
+  MapPinned,
+  Flag,
 } from 'lucide-react'
 
 import { type Campaign } from '@/utils/game/campaigns'
 import type {
+  ComposerActionRequest,
   NarrativeEvent,
   NpcRelationship,
   NpcRelationshipEvent,
+  QuickAction,
   SemanticEntityAnnotation,
   SessionCombatParticipant,
   SessionCombatState,
@@ -29,7 +34,72 @@ import type {
   WorldData,
 } from '../types'
 import { GameAccordionSection } from './GameAccordionSection'
-import { resolveSessionPlayerCharacter } from '@/utils/session/session-player'
+import { GameContextActions } from './GameContextActions'
+import type { StructuredIntent } from '@/lib/game/structured-intents'
+
+function buildQuestIntent(
+  type: 'quest.accept' | 'quest.decline' | 'quest.negotiate',
+  quest: SessionQuest,
+): StructuredIntent {
+  return {
+    type,
+    target: {
+      kind: 'quest',
+      questSlug: quest.slug,
+      questTitle: quest.title,
+      objectiveSummary: quest.objective_summary ?? null,
+      rewardSummary: quest.reward_summary ?? null,
+      offeredByNpcKey: quest.offered_by_npc_key ?? null,
+    },
+    prompt:
+      type === 'quest.accept'
+        ? `Acepto la misión "${quest.title}".`
+        : type === 'quest.decline'
+          ? `Rechazo la misión "${quest.title}".`
+          : `Estoy dispuesto a aceptar "${quest.title}", pero quiero negociar la recompensa.`,
+  }
+}
+
+function buildRelationshipIntent(
+  type: 'relationship.ask_help' | 'relationship.collect_favor',
+  relationship: NpcRelationship,
+): StructuredIntent {
+  return {
+    type,
+    target: {
+      kind: 'relationship',
+      npcKey: relationship.npc_key,
+      npcName: relationship.npc_name,
+    },
+    prompt:
+      type === 'relationship.ask_help'
+        ? `Quiero pedirle ayuda a ${relationship.npc_name} para nuestra situación actual.`
+        : `Quiero recordarle a ${relationship.npc_name} que me debe un favor.`,
+  }
+}
+
+function buildEntityIntent(
+  type: 'entity.travel' | 'entity.investigate' | 'entity.inspect' | 'faction.approach',
+  entity: SemanticEntityAnnotation,
+): StructuredIntent {
+  return {
+    type,
+    target: {
+      kind: 'entity',
+      entityKind: entity.kind === 'npc' ? 'npc' : entity.kind,
+      entityKey: entity.key,
+      entityLabel: entity.label,
+    },
+    prompt:
+      type === 'entity.travel'
+        ? `Quiero dirigirme hacia ${entity.label}.`
+        : type === 'entity.investigate'
+          ? `Quiero investigar más sobre ${entity.label}.`
+          : type === 'faction.approach'
+            ? `Quiero acercarme a la facción ${entity.label} con cautela.`
+            : `Quiero inspeccionar ${entity.label} con detalle.`,
+  }
+}
 
 function sortNarrativeEvents(events: NarrativeEvent[]) {
   return [...events].sort((a, b) => {
@@ -58,13 +128,13 @@ function deriveCompanionsFromEvents(events: NarrativeEvent[]): SidebarCompanion[
       companionMap.set(companion.npcKey, {
         npcKey: companion.npcKey,
         npcName: companion.npcName,
-        status: companion.action,
+        status: companion.action as 'joined' | 'available',
         reason: companion.reason ?? null,
       })
     }
   }
 
-  return Array.from(companionMap.values())
+  return [...companionMap.values()]
     .filter((value): value is SidebarCompanion => value !== null)
     .sort((a, b) => a.npcName.localeCompare(b.npcName, 'es'))
 }
@@ -79,7 +149,7 @@ function renderParticipantCard(
 
   return (
     <div
-      key={participant?.id ?? `${participant?.name}-${index}`}
+      key={participant.id ?? `${participant.name}-${index}`}
       className={`relative flex items-center justify-between overflow-hidden rounded-lg border bg-stone-900/40 p-3 transition-all ${isCurrentTurn
           ? 'border-amber-500/50 shadow-[0_0_15px_-3px_rgba(245,158,11,0.2)]'
           : isDefeated
@@ -106,7 +176,7 @@ function renderParticipantCard(
               className={`truncate font-serif text-sm tracking-wide ${isCurrentTurn ? 'text-amber-300' : 'text-stone-300'
                 }`}
             >
-              {participant?.name || 'Desconocido'}
+              {participant.name}
             </span>
             {isDefeated ? (
               <span className="shrink-0 rounded border border-red-900/50 bg-red-950/50 px-1.5 py-px text-[9px] uppercase tracking-wider text-red-500">
@@ -234,7 +304,183 @@ function getEntitySummary(
     return linkedQuest.objective_summary || linkedQuest.description
   }
 
-  return 'Entidad narrativa detectada desde la semántica persistida del feed.'
+  if (entity.kind === 'location') {
+    return 'Lugar de interés detectado en la semántica narrativa.'
+  }
+
+  if (entity.kind === 'item') {
+    return 'Ítem relevante detectado en la semántica narrativa.'
+  }
+
+  return 'Facción detectada en la semántica narrativa del feed.'
+}
+
+function buildQuestActions(quest: SessionQuest): QuickAction[] {
+  if (quest.status === 'offered') {
+    return [
+      {
+        id: `quest-accept-${quest.id}`,
+        label: 'Aceptar',
+        prompt: `Acepto la misión "${quest.title}".`,
+        intent: buildQuestIntent('quest.accept', quest),
+        tone: 'emerald',
+      },
+      {
+        id: `quest-negotiate-${quest.id}`,
+        label: 'Negociar',
+        prompt: `Estoy dispuesto a aceptar "${quest.title}", pero quiero negociar la recompensa.`,
+        intent: buildQuestIntent('quest.negotiate', quest),
+        tone: 'amber',
+      },
+      {
+        id: `quest-decline-${quest.id}`,
+        label: 'Rechazar',
+        prompt: `Rechazo la misión "${quest.title}".`,
+        intent: buildQuestIntent('quest.decline', quest),
+        tone: 'stone',
+      },
+    ]
+  }
+
+  const actions: QuickAction[] = [
+    {
+      id: `quest-talk-${quest.slug}`,
+      label: 'Hablar sobre esto',
+      prompt: `Quiero hablar sobre la misión "${quest.title}".`,
+      tone: 'violet',
+    },
+  ]
+
+  if (quest.status === 'accepted' || quest.status === 'active') {
+    actions.push(
+      {
+        id: `quest-progress-${quest.slug}`,
+        label: 'Pedir avance',
+        prompt: `Quiero revisar el progreso actual de la misión "${quest.title}".`,
+        tone: 'amber',
+      },
+      {
+        id: `quest-plan-${quest.slug}`,
+        label: 'Planear siguiente paso',
+        prompt: `Propongo el siguiente paso para completar "${quest.title}".`,
+        tone: 'sky',
+      },
+    )
+  }
+
+  return actions
+}
+
+function buildRelationshipActions(relationship: NpcRelationship): QuickAction[] {
+  const actions: QuickAction[] = [
+    {
+      id: `rel-talk-${relationship.npc_key}`,
+      label: 'Hablar',
+      prompt: `Quiero hablar directamente con ${relationship.npc_name}.`,
+      tone: 'violet',
+    },
+  ]
+
+  if (relationship.favor_debt > 0) {
+    actions.push({
+      id: `rel-collect-${relationship.npc_key}`,
+      label: 'Cobrar favor',
+      prompt: `Quiero recordarle a ${relationship.npc_name} que me debe un favor.`,
+      intent: buildRelationshipIntent('relationship.collect_favor', relationship),
+      tone: 'amber',
+    })
+  }
+
+  if (relationship.trust >= 3 || relationship.affinity >= 3) {
+    actions.push({
+      id: `rel-ask-help-${relationship.npc_key}`,
+      label: 'Pedir ayuda',
+      prompt: `Quiero pedirle ayuda a ${relationship.npc_name} para nuestra situación actual.`,
+      intent: buildRelationshipIntent('relationship.ask_help', relationship),
+      tone: 'emerald',
+    })
+  }
+
+  if (relationship.hostility >= 3) {
+    actions.push({
+      id: `rel-calm-${relationship.npc_key}`,
+      label: 'Calmar tensión',
+      prompt: `Quiero intentar calmar la tensión con ${relationship.npc_name}.`,
+      tone: 'stone',
+    })
+  }
+
+  return actions
+}
+
+function buildEntityActions(entity: SemanticEntityAnnotation): QuickAction[] {
+  const actions: QuickAction[] = []
+
+  if (entity.kind === 'location') {
+    actions.push(
+      {
+        id: `entity-travel-${entity.key}`,
+        label: 'Viajar',
+        prompt: `Quiero dirigirme hacia ${entity.label}.`,
+        intent: buildEntityIntent('entity.travel', entity),
+        tone: 'sky',
+      },
+      {
+        id: `entity-investigate-${entity.key}`,
+        label: 'Investigar',
+        prompt: `Quiero investigar más sobre ${entity.label}.`,
+        intent: buildEntityIntent('entity.investigate', entity),
+        tone: 'amber',
+      },
+    )
+  }
+
+  if (entity.kind === 'item') {
+    actions.push(
+      {
+        id: `entity-inspect-${entity.key}`,
+        label: 'Inspeccionar',
+        prompt: `Quiero inspeccionar ${entity.label} con detalle.`,
+        tone: 'violet',
+      },
+      {
+        id: `entity-obtain-${entity.key}`,
+        label: 'Conseguir',
+        prompt: `Quiero intentar conseguir ${entity.label}.`,
+        tone: 'emerald',
+      },
+    )
+  }
+
+  if (entity.kind === 'faction') {
+    return [
+      {
+        id: `entity-ask-${entity.key}`,
+        label: 'Preguntar',
+        prompt: `Quiero saber más sobre ${entity.label}.`,
+        tone: 'sky',
+      },
+      {
+        id: `entity-approach-${entity.key}`,
+        label: 'Acercarme',
+        prompt: `Quiero acercarme a la facción ${entity.label} con cautela.`,
+        tone: 'amber',
+      },
+    ]
+  }
+
+  if (entity.kind === 'objective') {
+    return [
+      {
+        id: `entity-focus-${entity.key}`,
+        label: 'Priorizar',
+        prompt: `Quiero centrarme ahora en el objetivo ${entity.label}.`,
+        tone: 'amber',
+      },
+    ]
+  }
+
+  return []
 }
 
 function QuestHistoryPanel({
@@ -391,10 +637,26 @@ function EntityFocusPanel({
   entity: SemanticEntityAnnotation
   summary: string
 }) {
+  const icon =
+    entity.kind === 'location' ? (
+      <MapPinned className="h-4 w-4 text-sky-300" />
+    ) : entity.kind === 'item' ? (
+      <Package className="h-4 w-4 text-violet-300" />
+    ) : entity.kind === 'faction' ? (
+      <Flag className="h-4 w-4 text-emerald-300" />
+    ) : (
+      <MapIcon className="h-4 w-4 text-stone-300" />
+    )
+
   return (
     <div className="rounded-xl border border-sky-900/40 bg-stone-900/50 p-4">
       <div className="mb-2 text-[10px] uppercase tracking-[0.24em] text-sky-400">Entidad enfocada</div>
-      <h3 className="font-serif text-base tracking-wide text-sky-300">{entity.label}</h3>
+
+      <div className="flex items-center gap-2">
+        {icon}
+        <h3 className="font-serif text-base tracking-wide text-sky-300">{entity.label}</h3>
+      </div>
+
       <div className="mt-2 text-[10px] uppercase tracking-[0.22em] text-stone-500">{entity.kind}</div>
       <p className="mt-3 text-sm leading-relaxed text-stone-300">{summary}</p>
     </div>
@@ -419,6 +681,7 @@ export function GameSessionSidebar({
   isWaitingForInitiative,
   selection,
   onSelectionChange,
+  onUsePrompt,
 }: {
   campaign: Campaign | null
   campaignDescription: string | null
@@ -437,6 +700,7 @@ export function GameSessionSidebar({
   isWaitingForInitiative: boolean
   selection: SidebarSelection
   onSelectionChange: (selection: SidebarSelection) => void
+  onUsePrompt: (action: string | ComposerActionRequest) => void
 }) {
   const isCombatActive = liveSessionCombat?.status === 'active'
 
@@ -491,6 +755,21 @@ export function GameSessionSidebar({
     : []
 
   const selectedEntity = selection?.type === 'entity' ? selection.entity : null
+
+  const contextualActions = useMemo(() => {
+    if (selectedQuest) return buildQuestActions(selectedQuest)
+    if (selectedRelationship) return buildRelationshipActions(selectedRelationship)
+    if (selectedEntity) return buildEntityActions(selectedEntity)
+    return []
+  }, [selectedQuest, selectedRelationship, selectedEntity])
+
+  const contextualActionsTitle = selectedQuest
+    ? 'Acciones de misión'
+    : selectedRelationship
+      ? 'Acciones sociales'
+      : selectedEntity
+        ? 'Acciones contextuales'
+        : 'Acciones'
 
   return (
     <aside className="custom-scrollbar flex h-full w-full flex-col gap-3 overflow-y-auto bg-stone-950 p-4 text-stone-300">
@@ -549,6 +828,12 @@ export function GameSessionSidebar({
               summary={getEntitySummary(selectedEntity, activeSessionQuests, activeNpcRelationships)}
             />
           ) : null}
+
+          <GameContextActions
+            title={contextualActionsTitle}
+            actions={contextualActions}
+            onUseAction={onUsePrompt}
+          />
         </section>
       )}
 
@@ -652,19 +937,17 @@ export function GameSessionSidebar({
                           key={player.user_id}
                           className="relative flex h-6 w-6 items-center justify-center rounded-full border border-stone-800 bg-stone-950 shadow-sm"
                         >
-                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-emerald-900/30 bg-emerald-950/20 text-[10px] font-bold text-emerald-400 shadow-inner">
-                            {getPlayerUsername(player)?.slice(0, 2) || '?'}
-                          </div>
+                          <span className="z-10 text-[9px] uppercase tracking-wider text-stone-500">
+                            {player.profiles?.username?.slice(0, 2) || player.characters?.name?.slice(0, 2) || '?'}
+                          </span>
                         </div>
                       ))}
                     </div>
                   </div>
                 ) : (
-                  liveSessionCombat?.participants
-                    ?.filter((p) => p !== null)
-                    .map((participant, index) =>
-                      renderParticipantCard(participant, index, activeCombatParticipant?.id === participant.id),
-                    )
+                  liveSessionCombat?.participants?.map((participant, index) =>
+                    renderParticipantCard(participant, index, activeCombatParticipant?.id === participant.id),
+                  )
                 )}
               </div>
             ) : null}
@@ -674,7 +957,6 @@ export function GameSessionSidebar({
 
               {partyPlayers.map((player) => {
                 const isMe = player.user_id === currentUserId
-                const selectedCharacter = getSelectedPlayerCharacter(player)
 
                 return (
                   <div
@@ -683,7 +965,7 @@ export function GameSessionSidebar({
                   >
                     <div className="min-w-0 flex-1">
                       <div className="truncate font-serif text-[13px] tracking-wide text-stone-300">
-                        {selectedCharacter?.name || 'Aventurero Desconocido'}
+                        {player.characters?.name || 'Aventurero Desconocido'}
                         {isMe ? (
                           <span className="ml-2 text-[10px] uppercase tracking-widest text-amber-600 opacity-80">
                             (Tú)
@@ -692,12 +974,14 @@ export function GameSessionSidebar({
                       </div>
 
                       <div className="mt-1 truncate text-[10px] uppercase tracking-widest text-stone-500">
-                        Ju: {getPlayerUsername(player) || 'Desconocido'}
+                        Ju: {player.profiles?.username || 'Desconocido'}
                       </div>
                     </div>
 
-                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-blue-900/30 bg-blue-950/20 text-[10px] font-bold text-blue-400 shadow-inner">
-                      {getPlayerUsername(player)?.slice(0, 2) || '?'}
+                    <div className="ml-3 flex h-8 w-8 shrink-0 items-center justify-center rounded border border-stone-800 bg-stone-950">
+                      <span className="font-serif text-xs text-stone-500">
+                        {player.characters?.name?.charAt(0) || '?'}
+                      </span>
                     </div>
                   </div>
                 )
@@ -844,22 +1128,4 @@ export function GameSessionSidebar({
       </div>
     </aside>
   )
-}
-
-function getPlayerUsername(player: SessionPlayer) {
-  const profile = Array.isArray(player.profiles) ? player.profiles[0] : player.profiles
-  return profile?.username || null
-}
-
-function getSelectedPlayerCharacter(player: SessionPlayer) {
-  const character = Array.isArray(player.characters) ? player.characters[0] : player.characters
-
-  return resolveSessionPlayerCharacter({
-    character_id: player.character_id ?? null,
-    selected_character_name: player.selected_character_name ?? null,
-    selected_character_stats: player.selected_character_stats ?? null,
-    selected_character_hp_current: player.selected_character_hp_current ?? null,
-    selected_character_hp_max: player.selected_character_hp_max ?? null,
-    characters: character ?? null,
-  })
 }

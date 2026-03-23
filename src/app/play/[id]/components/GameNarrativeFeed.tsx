@@ -6,11 +6,13 @@ import { Dices, Sparkles } from 'lucide-react'
 
 import type {
   CharacterSheet,
+  ComposerActionRequest,
   NarrativeEvent,
-  SemanticEntityAnnotation,
   SessionQuest,
   SidebarSelection,
+  SemanticEntityAnnotation,
 } from '../types'
+import type { StructuredIntent } from '@/lib/game/structured-intents'
 import { DiceRoller } from './DiceRoller'
 import type { DiceRollOutcome, DiceRollRequired } from '@/types/dice'
 
@@ -306,7 +308,7 @@ export function GameNarrativeFeed({
   pendingDiceRoll: DiceRollRequired | null
   onDiceResult: (result: DiceRollOutcome) => Promise<void> | void
   isSending: boolean
-  onQuestAction: (text: string) => void
+  onQuestAction: (action: string | ComposerActionRequest) => void
   onSidebarSelectionChange: (selection: SidebarSelection) => void
   activeSessionQuests: SessionQuest[]
 }) {
@@ -403,16 +405,50 @@ export function GameNarrativeFeed({
                 {questOffers.map((quest) => {
                   const existingQuest = activeSessionQuests.find((item) => item.slug === quest.slug)
 
+                  const buildQuestIntentRaw = (
+                    type: 'quest.accept' | 'quest.decline' | 'quest.negotiate',
+                  ): StructuredIntent => ({
+                    type,
+                    target: {
+                      kind: 'quest',
+                      questSlug: existingQuest?.slug ?? quest.slug,
+                      questTitle: quest.title,
+                      objectiveSummary: quest.objectiveSummary ?? null,
+                      rewardSummary: quest.rewardSummary ?? null,
+                      offeredByNpcKey: quest.offeredByNpcKey ?? null,
+                    },
+                    prompt:
+                      type === 'quest.accept'
+                        ? `Acepto el encargo "${quest.title}".`
+                        : type === 'quest.decline'
+                          ? `Rechazo el encargo "${quest.title}".`
+                          : `Puedo ayudar con "${quest.title}", pero quiero mejores condiciones. ¿Qué obtengo a cambio?`,
+                  })
+
                   return (
                     <QuestOfferCard
                       key={quest.slug}
                       quest={quest}
-                      onAccept={() => onQuestAction(`Acepto el encargo "${quest.title}".`)}
-                      onDecline={() => onQuestAction(`Rechazo el encargo "${quest.title}".`)}
+                      onAccept={() =>
+                        onQuestAction({
+                          prompt: `Acepto el encargo "${quest.title}".`,
+                          intent: buildQuestIntentRaw('quest.accept'),
+                          chatTab: 'adventure',
+                        })
+                      }
+                      onDecline={() =>
+                        onQuestAction({
+                          prompt: `Rechazo el encargo "${quest.title}".`,
+                          intent: buildQuestIntentRaw('quest.decline'),
+                          chatTab: 'adventure',
+                        })
+                      }
                       onNegotiate={() =>
-                        onQuestAction(
-                          `Puedo ayudar con "${quest.title}", pero quiero mejores condiciones. ¿Qué obtengo a cambio?`,
-                        )
+                        onQuestAction({
+                          prompt: `Puedo ayudar con "${quest.title}", pero quiero mejores condiciones. ¿Qué obtengo a cambio?`,
+                          intent: buildQuestIntentRaw('quest.negotiate'),
+                          chatTab: 'adventure',
+                        })
                       }
                       onOpenQuest={() =>
                         onSidebarSelectionChange({

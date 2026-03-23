@@ -13,6 +13,7 @@ import { useGamePlayController } from './hooks/useGamePlayController'
 import { GameLayoutShell } from './components/GameLayoutShell'
 import type {
   CharacterSheet,
+  ComposerActionRequest,
   CurrentUser,
   NarrativeEvent,
   NpcRelationship,
@@ -116,6 +117,7 @@ export default function GameClient({
     isMyTurn,
     handleSubmit,
     handleDiceResult,
+    submitAction,
   } = useGamePlayController({
     character,
     currentUserId: currentUser.id,
@@ -137,9 +139,23 @@ export default function GameClient({
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [events, chatTab, isTyping])
 
-  const handleQuestAction = (text: string) => {
-    setChatTab('adventure')
-    setInputText(text)
+  const handleQuestAction = async (action: string | ComposerActionRequest) => {
+    const normalizedAction: ComposerActionRequest =
+      typeof action === 'string'
+        ? { prompt: action, chatTab: 'adventure' }
+        : { ...action, chatTab: action.chatTab ?? 'adventure' }
+
+    if (normalizedAction.intent) {
+      if (normalizedAction.chatTab) {
+        setChatTab(normalizedAction.chatTab)
+      }
+
+      await submitAction(normalizedAction)
+      return
+    }
+
+    setChatTab(normalizedAction.chatTab ?? 'adventure')
+    setInputText(normalizedAction.prompt)
   }
 
   return (

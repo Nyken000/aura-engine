@@ -8,12 +8,14 @@ import {
 } from '@/types/dice'
 import type {
   CharacterSheet,
+  ComposerActionRequest,
   GameChatTab,
   NarrativeEvent,
   SessionCombatParticipant,
   SessionCombatState,
   SessionData,
 } from '../types'
+import type { StructuredIntent } from '@/lib/game/structured-intents'
 
 type UseGamePlayControllerParams = {
   character: CharacterSheet
@@ -27,7 +29,11 @@ type UseGamePlayControllerParams = {
   isSending: boolean
   pendingDiceRoll: DiceRollRequired | null
   appendOptimisticEvent: (event: NarrativeEvent) => void
-  sendMessage: (content: string, clientEventId?: string) => Promise<void>
+  sendMessage: (
+    content: string,
+    clientEventId?: string,
+    intent?: StructuredIntent | null,
+  ) => Promise<void>
   sendDiceResolution: (content: string) => Promise<void>
   onInvalidGroupChannel?: () => void
 }
@@ -67,18 +73,23 @@ export function useGamePlayController({
         activeCombatParticipant.user_id === currentUserId
       : !liveSession || liveSession.turn_player_id === currentUserId
 
-  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
+  const submitAction = async (action: string | ComposerActionRequest) => {
+    const normalizedAction: ComposerActionRequest =
+      typeof action === 'string'
+        ? { prompt: action, chatTab: 'adventure' }
+        : action
 
-    if (!inputText.trim() || isSending) return
+    const targetChatTab = normalizedAction.chatTab ?? 'adventure'
+    const message = normalizedAction.prompt.trim()
 
-    if (chatTab === 'group' && !sessionId) {
+    if (!message || isSending) return
+
+    if (targetChatTab === 'group' && !sessionId) {
       console.error('El chat grupal requiere una sesión activa')
       onInvalidGroupChannel?.()
       return
     }
 
-    const message = inputText.trim()
     const clientEventId = crypto.randomUUID()
 
     setInputText('')
@@ -89,16 +100,22 @@ export function useGamePlayController({
       content: message,
       created_at: new Date().toISOString(),
       client_event_id: clientEventId,
-      event_type: chatTab === 'group' ? 'group_message' : 'player_message',
+      event_type: targetChatTab === 'group' ? 'group_message' : 'player_message',
       payload: {
         sender_name: character.name,
-        channel: chatTab,
+        channel: targetChatTab,
+        ...(normalizedAction.intent ? { intent: normalizedAction.intent } : {}),
       },
       character_id: character.id,
     }
 
     appendOptimisticEvent(optimisticEvent)
-    await sendMessage(message, clientEventId)
+    await sendMessage(message, clientEventId, normalizedAction.intent ?? null)
+  }
+
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    await submitAction({ prompt: inputText, chatTab })
   }
 
   const handleDiceResult = async (result: DiceRollOutcome) => {
@@ -118,5 +135,6 @@ export function useGamePlayController({
     isMyTurn,
     handleSubmit,
     handleDiceResult,
+    submitAction,
   }
 }

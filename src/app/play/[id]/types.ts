@@ -1,6 +1,15 @@
 import type { DiceRollRequired } from '@/types/dice'
+import type { StructuredIntent } from '@/lib/game/structured-intents'
 
 export type GameChatTab = 'adventure' | 'group'
+
+export type NarrativeFilter =
+  | 'all'
+  | 'quests'
+  | 'social'
+  | 'combat'
+  | 'group'
+  | 'adventure'
 
 export type CharacterStats = {
   race?: string
@@ -279,32 +288,18 @@ export type SessionCombatState = {
 }
 
 export type SessionPlayer = {
-    user_id: string
-    character_id?: string | null
-    selected_character_name?: string | null
-    selected_character_stats?: CharacterStats | null
-    selected_character_hp_current?: number | null
-    selected_character_hp_max?: number | null
-    profiles?: {
-        username?: string | null
-    } | {
-        username?: string | null
-    }[] | null
-    characters?: {
-        id: string
-        name: string
-        hp_current: number
-        hp_max: number
-        stats?: CharacterStats | null
-        inventory?: InventoryItem[] | null
-    } | {
-        id: string
-        name: string
-        hp_current: number
-        hp_max: number
-        stats?: CharacterStats | null
-        inventory?: InventoryItem[] | null
-    }[] | null
+  user_id: string
+  profiles?: {
+    username?: string | null
+  } | null
+  characters?: {
+    id: string
+    name: string
+    hp_current: number
+    hp_max: number
+    stats?: CharacterStats | null
+    inventory?: InventoryItem[] | null
+  } | null
 }
 
 export type SidebarCompanion = {
@@ -319,6 +314,73 @@ export type SidebarSelection =
   | { type: 'relationship'; npcKey: string }
   | { type: 'entity'; entity: SemanticEntityAnnotation }
   | null
+
+export type HoverPreviewData =
+  | {
+    kind: 'npc'
+    title: string
+    subtitle?: string | null
+    summary: string
+  }
+  | {
+    kind: 'quest'
+    title: string
+    subtitle?: string | null
+    summary: string
+  }
+  | {
+    kind: 'entity'
+    title: string
+    subtitle?: string | null
+    summary: string
+  }
+  | null
+
+export type ComposerActionRequest = {
+  prompt: string
+  intent?: StructuredIntent | null
+  chatTab?: GameChatTab
+}
+
+export type QuickAction = {
+  id: string
+  label: string
+  prompt: string
+  intent?: StructuredIntent | null
+  tone?: 'amber' | 'sky' | 'violet' | 'emerald' | 'stone'
+}
+
+export type WorldAlert =
+  | {
+    id: string
+    kind: 'quest'
+    title: string
+    detail: string
+    actionLabel: string
+    selection: SidebarSelection
+    prompt?: string
+    intent?: StructuredIntent | null
+  }
+  | {
+    id: string
+    kind: 'social'
+    title: string
+    detail: string
+    actionLabel: string
+    selection: SidebarSelection
+    prompt?: string
+    intent?: StructuredIntent | null
+  }
+  | {
+    id: string
+    kind: 'companion'
+    title: string
+    detail: string
+    actionLabel: string
+    selection: SidebarSelection
+    prompt?: string
+    intent?: StructuredIntent | null
+  }
 
 export type RealtimeInsertPayload<T> = {
   new: T
