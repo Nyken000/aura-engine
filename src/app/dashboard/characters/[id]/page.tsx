@@ -35,6 +35,8 @@ type CharacterStats = {
   race?: string
   class?: string
   background?: string
+  racial_traits?: string[]
+  class_features?: string[]
   class_progression?: ClassProgressionEntry[]
   custom_spells?: SpellEntry[]
   [key: string]: unknown
@@ -128,11 +130,35 @@ export default async function CharacterSheetPage({
   let skills: string[] = []
   let inventoryRaw: InventoryItem[] = []
   try { skills = typeof character.skills === 'string' ? JSON.parse(character.skills) : (character.skills || []) } catch(e: unknown){ console.error(e) }
-  try { inventoryRaw = typeof character.inventory === 'string' ? JSON.parse(character.inventory) : (character.inventory || []) } catch(e: unknown){ console.error(e) }
+  try {
+    const parsedInventory = typeof character.inventory === 'string'
+      ? JSON.parse(character.inventory)
+      : (character.inventory || [])
+
+    inventoryRaw = Array.isArray(parsedInventory)
+      ? parsedInventory.filter((item): item is InventoryItem => Boolean(item && typeof item === 'object'))
+      : []
+  } catch(e: unknown){ console.error(e) }
+
+  const racialTraits = Array.isArray(stats.racial_traits)
+    ? stats.racial_traits.filter((trait): trait is string => typeof trait === 'string' && trait.trim().length > 0)
+    : []
+
+  const classFeatures = Array.isArray(stats.class_features)
+    ? stats.class_features.filter((feature): feature is string => typeof feature === 'string' && feature.trim().length > 0)
+    : []
+
+  const classProgression = Array.isArray(stats.class_progression)
+    ? stats.class_progression.filter((entry): entry is ClassProgressionEntry => Boolean(entry && typeof entry === 'object'))
+    : []
+
+  const customSpells = Array.isArray(stats.custom_spells)
+    ? stats.custom_spells.filter((spell): spell is SpellEntry => Boolean(spell && typeof spell === 'object'))
+    : []
 
   // Separate physical items from passive/magical AI traits
-  const items = inventoryRaw.filter(i => i && typeof i === 'object' ? i.type !== 'passive' : true)
-  const passives = inventoryRaw.filter(i => i && typeof i === 'object' && i.type === 'passive')
+  const items = inventoryRaw.filter((item) => item.type !== 'passive')
+  const passives = inventoryRaw.filter((item) => item.type === 'passive')
 
   const raceValue = stats.race || character.race || 'Desconocido'
   const classValue = stats.class || character.class || 'Desconocido'
@@ -301,9 +327,9 @@ export default async function CharacterSheetPage({
                   <h4 className="font-bold text-amber-400 mb-2 border-b border-amber-500/20 pb-2">Legado: {raceValue}</h4>
                   <p className="text-xs text-foreground/70 mb-3 italic">{raceInfo.flavor}</p>
                   <div className="text-xs bg-black/50 p-3 rounded font-medium text-amber-500/90 leading-relaxed">
-                    {stats.racial_traits && Array.isArray(stats.racial_traits) && stats.racial_traits.length > 0 ? (
+                    {racialTraits.length > 0 ? (
                       <ul className="space-y-2">
-                        {stats.racial_traits.map((trait: string, i: number) => {
+                        {racialTraits.map((trait: string, i: number) => {
                           const [name, ...descParts] = trait.split(':')
                           const desc = descParts.join(':').trim()
                           return (
@@ -330,9 +356,9 @@ export default async function CharacterSheetPage({
                   <h4 className="font-bold text-blue-400 mb-2 border-b border-blue-500/20 pb-2">Profesión: {classValue}</h4>
                   <p className="text-xs text-foreground/70 mb-3 italic">{classInfo.flavor}</p>
                   <div className="text-xs bg-black/50 p-3 rounded font-medium text-blue-400/90 leading-relaxed">
-                    {stats.class_features && Array.isArray(stats.class_features) && stats.class_features.length > 0 ? (
+                    {classFeatures.length > 0 ? (
                       <ul className="space-y-2">
-                        {stats.class_features.map((feature: string, i: number) => {
+                        {classFeatures.map((feature: string, i: number) => {
                           const [name, ...descParts] = feature.split(':')
                           const desc = descParts.join(':').trim()
                           return (
@@ -368,7 +394,7 @@ export default async function CharacterSheetPage({
                   </h4>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     {passives.map((trait, i) => (
-                      <div key={i} className="bg-magic-900/10 border border-magic-500/20 p-4 rounded-xl relative overflow-hidden group hover:border-magic-500/40 transition-colors">
+                      <div key={`${trait.name || 'passive'}-${i}`} className="bg-magic-900/10 border border-magic-500/20 p-4 rounded-xl relative overflow-hidden group hover:border-magic-500/40 transition-colors">
                         <div className="absolute -right-4 -bottom-4 text-7xl font-black text-magic-500/5 select-none z-0 group-hover:scale-110 transition-transform">✦</div>
                         <h5 className="font-bold text-magic-300 mb-1 relative z-10">{trait.name}</h5>
                         <p className="text-xs text-foreground/70 leading-relaxed relative z-10">{trait.description}</p>
@@ -380,14 +406,14 @@ export default async function CharacterSheetPage({
             </div>
 
             {/* Class Progression Roadmap */}
-            {stats.class_progression && Array.isArray(stats.class_progression) && stats.class_progression.length > 0 && (
+            {classProgression.length > 0 && (
               <div className="bg-black/60 border border-white/10 rounded-2xl p-6 backdrop-blur-md shadow-xl">
                  <h3 className="text-xl font-bold font-serif text-blue-400 mb-6 flex items-center gap-2">
                   <Flame className="w-5 h-5" /> Progresión de Clase
                 </h3>
                 
                 <div className="relative border-l border-white/10 ml-3 md:ml-4 space-y-6 pb-2">
-                  {stats.class_progression.map((prog: ClassProgressionEntry, i: number) => (
+                  {classProgression.map((prog: ClassProgressionEntry, i: number) => (
                     <div key={i} className="relative pl-6 md:pl-8">
                       {/* Timeline dot */}
                       <div className="absolute -left-[5px] top-1 w-2.5 h-2.5 rounded-full bg-blue-500 shadow-[0_0_10px_rgba(59,130,246,0.8)]" />
@@ -455,14 +481,14 @@ export default async function CharacterSheetPage({
             </div>
 
             {/* Grimoire / Spells */}
-            {stats.custom_spells && Array.isArray(stats.custom_spells) && stats.custom_spells.length > 0 && (
+            {customSpells.length > 0 && (
               <div className="bg-black/60 border border-white/10 rounded-2xl p-6 backdrop-blur-md shadow-xl">
                  <h3 className="text-xl font-bold font-serif text-magic-400 mb-6 flex items-center gap-2">
                   <BookOpen className="w-5 h-5" /> Grimorio y Habilidades Activas
                 </h3>
                 
                 <div className="grid grid-cols-1 gap-4">
-                  {stats.custom_spells.map((spell: SpellEntry, i: number) => (
+                  {customSpells.map((spell: SpellEntry, i: number) => (
                     <div key={i} className="bg-magic-900/10 border border-magic-500/20 p-4 rounded-xl hover:border-magic-500/40 transition-colors">
                       <div className="flex justify-between items-start mb-2">
                         <h4 className="font-bold text-magic-300">{spell.name}</h4>
@@ -488,7 +514,7 @@ export default async function CharacterSheetPage({
               <ul className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {items.length > 0 ? (
                   items.map((item: InventoryItem, i: number) => (
-                    <li key={i} className={`bg-stone-900/80 border p-3 rounded-lg flex items-start gap-3 transition-colors ${item.type === 'magic_item' ? 'border-purple-500/30 hover:border-purple-500/50' : item.type === 'weapon' ? 'border-red-500/20 hover:border-red-500/40' : 'border-white/5 hover:border-amber-500/20'}`}>
+                    <li key={`${item.name || 'item'}-${i}`} className={`bg-stone-900/80 border p-3 rounded-lg flex items-start gap-3 transition-colors ${item.type === 'magic_item' ? 'border-purple-500/30 hover:border-purple-500/50' : item.type === 'weapon' ? 'border-red-500/20 hover:border-red-500/40' : 'border-white/5 hover:border-amber-500/20'}`}>
                       <div className={`w-8 h-8 rounded flex items-center justify-center shrink-0 mt-0.5 border ${item.type === 'magic_item' ? 'bg-purple-900/30 border-purple-500/30 text-purple-400' : item.type === 'weapon' ? 'bg-red-900/20 border-red-500/30 text-red-400' : 'bg-amber-900/30 border-amber-500/30 text-amber-500/70'}`}>
                         {item.type === 'weapon' ? <Swords className="w-4 h-4" /> : item.type === 'magic_item' ? <Sparkles className="w-4 h-4" /> : <Package className="w-4 h-4" />}
                       </div>

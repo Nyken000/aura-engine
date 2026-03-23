@@ -35,6 +35,10 @@ export default async function DashboardPage() {
     )})`)
     .order('created_at', { ascending: false })
 
+  const safeWorlds = (worlds ?? []).filter(Boolean)
+  const safeCharacters = (characters ?? []).filter(Boolean)
+  const safeSessions = (mySessions ?? []).filter(Boolean)
+
   return (
     <div className="min-h-screen bg-background text-foreground relative overflow-x-hidden">
       
@@ -102,7 +106,7 @@ export default async function DashboardPage() {
                 <h2 className="font-display text-xl font-bold text-parchment-200">
                   Tus Mundos
                 </h2>
-                <span className="text-xs text-foreground/40 font-mono">{worlds?.length || 0}</span>
+                <span className="text-xs text-foreground/40 font-mono">{safeWorlds.length}</span>
               </div>
               <Link
                 href="/dashboard/worlds/new"
@@ -113,7 +117,7 @@ export default async function DashboardPage() {
               </Link>
             </div>
 
-            {!worlds || worlds.length === 0 ? (
+            {safeWorlds.length === 0 ? (
               <Link 
                 href="/dashboard/worlds/new"
                 className="group flex flex-col items-center justify-center p-12 rounded-2xl border border-dashed border-amber-900/30 hover:border-amber-500/40 bg-stone-950/40 hover:bg-amber-500/5 transition-all duration-300 cursor-pointer"
@@ -126,7 +130,7 @@ export default async function DashboardPage() {
               </Link>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {worlds.map((world) => (
+                {safeWorlds.map((world) => (
                   <Link
                     key={world.id}
                     href={`/dashboard/worlds/${world.id}`}
@@ -180,7 +184,7 @@ export default async function DashboardPage() {
                 <h2 className="font-display text-xl font-bold text-parchment-200">
                   Personajes
                 </h2>
-                <span className="text-xs text-foreground/40 font-mono">{characters?.length || 0}</span>
+                <span className="text-xs text-foreground/40 font-mono">{safeCharacters.length}</span>
               </div>
               <Link
                 href="/dashboard/characters/new"
@@ -192,7 +196,7 @@ export default async function DashboardPage() {
             </div>
 
             <div className="space-y-3">
-              {!characters || characters.length === 0 ? (
+              {safeCharacters.length === 0 ? (
                 <Link
                   href="/dashboard/characters/new"
                   className="group flex flex-col items-center justify-center p-8 rounded-xl border border-dashed border-blood-700/30 hover:border-blood-500/50 hover:bg-blood-500/5 transition-all duration-200 cursor-pointer"
@@ -205,7 +209,7 @@ export default async function DashboardPage() {
                 </Link>
               ) : (
                 <>
-                  {characters.map((char) => (
+                  {safeCharacters.map((char) => (
                     <CharacterCard key={char.id} char={char} />
                   ))}
                   <Link
@@ -247,8 +251,8 @@ export default async function DashboardPage() {
         {/* MULTIPLAYER SECTION */}
         <div className="mt-10">
           <MultiplayerPanel 
-            worlds={worlds || []} 
-            activeSessions={mySessions || []} 
+            worlds={safeWorlds} 
+            activeSessions={safeSessions} 
             currentUserId={user.id}
           />
         </div>

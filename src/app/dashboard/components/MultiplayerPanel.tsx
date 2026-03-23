@@ -29,6 +29,9 @@ export default function MultiplayerPanel({ worlds, activeSessions, currentUserId
   const [selectedWorld, setSelectedWorld] = useState('')
   const [maxPlayers, setMaxPlayers] = useState(4)
 
+  const safeSessions = (activeSessions ?? []).filter(Boolean)
+  const safeWorlds = (worlds ?? []).filter(Boolean)
+
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
@@ -73,8 +76,8 @@ export default function MultiplayerPanel({ worlds, activeSessions, currentUserId
             <Users className="w-4 h-4 text-violet-400" />
           </div>
           <h2 className="font-display text-xl font-bold text-parchment-200">Multijugador</h2>
-          {activeSessions.length > 0 && (
-            <span className="text-xs text-foreground/40 font-mono">{activeSessions.length}</span>
+          {safeSessions.length > 0 && (
+            <span className="text-xs text-foreground/40 font-mono">{safeSessions.length}</span>
           )}
         </div>
         <div className="flex gap-2">
@@ -94,7 +97,7 @@ export default function MultiplayerPanel({ worlds, activeSessions, currentUserId
       </div>
 
       {/* Active Sessions */}
-      {activeSessions.length === 0 ? (
+      {safeSessions.length === 0 ? (
         <div className="flex flex-col items-center justify-center p-10 rounded-2xl border border-dashed border-violet-900/30 bg-stone-950/30 text-center">
           <div className="text-3xl mb-3">🎲</div>
           <p className="text-sm text-foreground/40">Sin sesiones activas</p>
@@ -102,7 +105,7 @@ export default function MultiplayerPanel({ worlds, activeSessions, currentUserId
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          {activeSessions.map(session => (
+          {safeSessions.map(session => (
             <Link
               key={session.id}
               href={`/session/${session.invite_code}`}
@@ -152,7 +155,7 @@ export default function MultiplayerPanel({ worlds, activeSessions, currentUserId
             <form onSubmit={handleCreate} className="space-y-4">
               <div>
                 <label className="text-xs text-foreground/50 mb-1.5 block font-medium uppercase tracking-wider">Mundo de la aventura</label>
-                {worlds.length === 0 ? (
+                {safeWorlds.length === 0 ? (
                   <p className="text-sm text-stone-500 italic">No tienes mundos. <Link href="/dashboard/worlds/new" className="text-amber-400 underline">Crea uno primero.</Link></p>
                 ) : (
                   <select
@@ -162,7 +165,7 @@ export default function MultiplayerPanel({ worlds, activeSessions, currentUserId
                     className="w-full bg-stone-900 border border-stone-700 rounded-lg px-3 py-2.5 text-sm text-parchment-200 focus:outline-none focus:border-violet-500 transition-colors cursor-pointer"
                   >
                     <option value="">Selecciona un mundo...</option>
-                    {worlds.map(w => (
+                    {safeWorlds.map(w => (
                       <option key={w.id} value={w.id}>{w.name}</option>
                     ))}
                   </select>
