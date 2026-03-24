@@ -100,10 +100,12 @@ export function consumeAssistantStreamChunk(
     const lines = accumulated.split('\n')
     const remainingBuffer = lines.pop() ?? ''
 
-    for (const line of lines) {
-        if (!line.trim()) continue
+    for (const rawLine of lines) {
+        const line = rawLine.trim()
+        if (!line) continue
+        if (!line.startsWith('data:')) continue
 
-        const normalizedLine = line.startsWith('data:') ? line.slice(5).trim() : line.trim()
+        const normalizedLine = line.slice(5).trim()
         if (!normalizedLine) continue
 
         let parsed: StreamChunkPayload

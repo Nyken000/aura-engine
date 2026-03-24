@@ -176,61 +176,75 @@ export default function GameClient({
     let finalAssistantText = ''
     let finalDiceRollRequired: DiceRollRequired | null = null
     let finalAssistantClientEventId: string | null = null
+    let sawDone = false
 
     setIsTyping(true)
     setTypewriterText('')
 
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
+    try {
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
 
-      accumulated += decoder.decode(value, { stream: true })
+        accumulated += decoder.decode(value, { stream: true })
 
-      const chunks = accumulated.split('\n')
-      accumulated = chunks.pop() || ''
+        const lines = accumulated.split('\n')
+        accumulated = lines.pop() || ''
 
-      for (const chunk of chunks) {
-        const normalizedChunk = chunk.startsWith('data:') ? chunk.slice(5).trim() : chunk.trim()
-        if (!normalizedChunk) continue
+        for (const rawLine of lines) {
+          const line = rawLine.trim()
+          if (!line) continue
+          if (!line.startsWith('data:')) continue
 
-        let parsed: {
-          chunk?: string
-          text?: string
-          done?: boolean
-          fullText?: string
-          dice_roll_required?: DiceRollRequired | null
-          assistant_client_event_id?: string | null
+          const payload = line.slice(5).trim()
+          if (!payload) continue
+
+          let parsed: {
+            chunk?: string
+            text?: string
+            done?: boolean
+            fullText?: string
+            dice_roll_required?: DiceRollRequired | null
+            assistant_client_event_id?: string | null
+          }
+
+          try {
+            parsed = JSON.parse(payload)
+          } catch {
+            continue
+          }
+
+          const streamedText = parsed.chunk ?? parsed.text ?? ''
+
+          if (streamedText) {
+            finalAssistantText += streamedText
+            setTypewriterText(finalAssistantText)
+          }
+
+          if (parsed.dice_roll_required) {
+            finalDiceRollRequired = parsed.dice_roll_required
+          }
+
+          if (parsed.assistant_client_event_id) {
+            finalAssistantClientEventId = parsed.assistant_client_event_id
+          }
+
+          if (parsed.done) {
+            sawDone = true
+            setPendingDiceRoll(finalDiceRollRequired)
+            setPendingAssistantClientEventId(finalAssistantClientEventId)
+            setIsTyping(false)
+            setTypewriterText('')
+            setIsSending(false)
+            router.refresh()
+          }
         }
-
-        try {
-          parsed = JSON.parse(normalizedChunk)
-        } catch {
-          continue
-        }
-
-        const streamedText = parsed.chunk ?? parsed.text ?? ''
-
-        if (streamedText) {
-          finalAssistantText += streamedText
-          setTypewriterText(finalAssistantText)
-        }
-
-        if (parsed.dice_roll_required) {
-          finalDiceRollRequired = parsed.dice_roll_required
-        }
-
-        if (parsed.assistant_client_event_id) {
-          finalAssistantClientEventId = parsed.assistant_client_event_id
-        }
-
-        if (parsed.done) {
-          setPendingDiceRoll(finalDiceRollRequired)
-          setPendingAssistantClientEventId(finalAssistantClientEventId)
-          setIsTyping(false)
-          setTypewriterText('')
-          setIsSending(false)
-          router.refresh()
-        }
+      }
+    } finally {
+      if (!sawDone) {
+        setIsTyping(false)
+        setTypewriterText('')
+        setIsSending(false)
       }
     }
   }
