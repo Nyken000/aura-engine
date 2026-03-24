@@ -227,23 +227,26 @@ export function buildRuleRetrievalQuery(params: {
   snapshot?: NarrativeSnapshotLite | null;
   worldName?: string | null;
 }): string {
-  const { playerContent, intentKind, recentEvents, snapshot, worldName } = params;
-  const lastAssistantMessage = getLastAssistantMessage(recentEvents);
-  const questTerms = (snapshot?.quests ?? []).slice(0, 3).map((quest) => quest.title);
+  const { playerContent, intentKind, recentEvents, snapshot, worldName } = params
+  const lastAssistantMessage = getLastAssistantMessage(recentEvents)
+  const compactPreviousBeat = lastAssistantMessage
+    ? words(lastAssistantMessage).slice(0, 24).join(' ')
+    : null
+  const questTerms = (snapshot?.quests ?? []).slice(0, 2).map((quest) => quest.title)
   const npcTerms = (snapshot?.relationships ?? [])
-    .slice(0, 3)
-    .map((relationship) => relationship.npc_name);
+    .slice(0, 2)
+    .map((relationship) => relationship.npc_name)
 
   return [
-    playerContent,
+    words(playerContent).slice(0, 32).join(' '),
     `intención ${intentKind}`,
     worldName ? `mundo ${worldName}` : null,
-    lastAssistantMessage ? `contexto previo ${lastAssistantMessage}` : null,
-    questTerms.length > 0 ? `misiones ${questTerms.join(" ")}` : null,
-    npcTerms.length > 0 ? `npcs ${npcTerms.join(" ")}` : null,
+    compactPreviousBeat ? `contexto previo ${compactPreviousBeat}` : null,
+    questTerms.length > 0 ? `misiones ${questTerms.join(' ')}` : null,
+    npcTerms.length > 0 ? `npcs ${npcTerms.join(' ')}` : null,
   ]
     .filter(Boolean)
-    .join(" ");
+    .join(' ')
 }
 
 export function assessNarrativeQuality(params: {

@@ -265,6 +265,7 @@ function buildPrompt(params: {
         character.worlds?.description ?? "Sin descripción disponible";
 
     const history = [...recentEvents]
+        .slice(-8)
         .reverse()
         .map((event) => `${event.role.toUpperCase()}: ${event.content}`)
         .join("\n");
@@ -289,6 +290,7 @@ function buildPrompt(params: {
     const rulesBlock =
         relevantRules.length > 0
             ? relevantRules
+                .slice(0, 2)
                 .map((rule, index) => {
                     const pages =
                         rule.page_from || rule.page_to
@@ -406,6 +408,7 @@ async function generateValidatedGmResponse(params: {
     recentEvents: NarrativeEventRow[];
     relevantRules: RuleMatchRecord[];
     logger?: EngineStreamLogger;
+    allowRetry?: boolean;
 }): Promise<ReturnType<typeof parseGmStructuredOutput>> {
     const {
         modelGateway,
@@ -415,12 +418,14 @@ async function generateValidatedGmResponse(params: {
         recentEvents,
         relevantRules,
         logger,
+        allowRetry = false,
     } = params;
 
     let activePrompt = prompt;
     let fallbackParsed: ReturnType<typeof parseGmStructuredOutput> | null = null;
+    const maxAttempts = allowRetry ? 2 : 1;
 
-    for (let attempt = 0; attempt < 2; attempt += 1) {
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
         const fullResponse = await collectModelResponse(modelGateway, activePrompt);
         const parsed = parseGmStructuredOutput(fullResponse);
         const quality = assessNarrativeQuality({
@@ -923,6 +928,7 @@ export async function processEngineStream(params: {
                     recentEvents,
                     relevantRules,
                     logger,
+                    allowRetry: process.env.VERCEL_ENV !== 'production',
                 });
 
                 const {
