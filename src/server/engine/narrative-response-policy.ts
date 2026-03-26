@@ -114,6 +114,18 @@ function containsConcreteAnswer(value: string): boolean {
   );
 }
 
+function containsDiscoveryLanguage(value: string): boolean {
+  return /(descubres|notas que|ves que|identificas|reconoces|adviertes|percibes una grieta|una marca|un simbolo|un símbolo|una funcion|un mecanismo|un reflejo distinto|una vibracion|una vibración)/i.test(
+    value,
+  )
+}
+
+function containsDistinctOptions(value: string): boolean {
+  return /(puedes|podrias|podrías|tambien puedes|también puedes|si prefieres|otra opcion|otra opción|o bien)/i.test(
+    value,
+  )
+}
+
 export function inferPlayerIntentKind(params: {
   content: string;
   structuredIntent?: StructuredIntent | null;
@@ -152,22 +164,24 @@ export function inferPlayerIntentKind(params: {
 }
 
 export function buildNarrativeDirectorInstructions(params: {
-  intentKind: PlayerIntentKind;
-  recentEvents: NarrativeEventLite[];
-  snapshot?: NarrativeSnapshotLite | null;
+  intentKind: PlayerIntentKind
+  recentEvents: NarrativeEventLite[]
+  snapshot?: NarrativeSnapshotLite | null
 }): string {
-  const { intentKind, recentEvents, snapshot } = params;
-  const lastAssistantMessage = getLastAssistantMessage(recentEvents);
+  const { intentKind, recentEvents, snapshot } = params
+  const lastAssistantMessage = getLastAssistantMessage(recentEvents)
+
   const activeQuestSummary = unique(
     (snapshot?.quests ?? [])
       .filter(
         (quest) =>
-          quest.status === "offered" ||
-          quest.status === "accepted" ||
-          quest.status === "in_progress",
+          quest.status === 'offered' ||
+          quest.status === 'accepted' ||
+          quest.status === 'in_progress',
       )
       .map((quest) => `${quest.title} [${quest.status}]`),
-  );
+  )
+
   const relationshipsSummary = unique(
     (snapshot?.relationships ?? [])
       .slice(0, 3)
@@ -175,49 +189,78 @@ export function buildNarrativeDirectorInstructions(params: {
         (relationship) =>
           `${relationship.npc_name} (afinidad ${relationship.affinity}, confianza ${relationship.trust})`,
       ),
-  );
+  )
 
   const modeInstruction = (() => {
     switch (intentKind) {
-      case "question":
-        return "El jugador está haciendo una pregunta o buscando claridad. Debes responderla con al menos un dato nuevo del mundo antes de ofrecer la siguiente decisión.";
-      case "hesitation":
-        return "El jugador está dudando. No repitas el último gancho. Aterriza la escena y ofrece de 2 a 4 opciones diegéticas claras sin sonar a menú robótico.";
-      case "inspection":
-        return "El jugador inspecciona o intenta comprender algo. Describe detalles sensoriales concretos y revela al menos una pista, riesgo o propiedad específica del objetivo.";
-      case "movement":
-        return "El jugador se desplaza. Muestra cómo cambia el entorno y qué consecuencia inmediata produce ese movimiento.";
-      case "interaction":
-        return "El jugador interactúa socialmente. Refleja reacción, tono y posible cambio relacional del interlocutor o del entorno.";
-      case "combat":
-        return "El jugador está en una acción de combate. Resuelve consecuencias inmediatas, respeta la economía del turno y evita ambigüedad.";
-      case "decision":
-        return "El jugador tomó una decisión. Confírmala dentro de la ficción y haz avanzar la escena con consecuencias concretas.";
+      case 'question':
+        return [
+          'El jugador está haciendo una pregunta.',
+          'Tu prioridad es responderla con claridad dentro de la ficción.',
+          'Debes revelar al menos un dato nuevo y útil.',
+          'No des una respuesta evasiva ni reformules simplemente el misterio.'
+        ].join(' ')
+      case 'hesitation':
+        return [
+          'El jugador no sabe qué hacer.',
+          'No repitas la escena.',
+          'Ofrece entre 2 y 4 opciones diegéticas concretas y accionables.',
+          'Cada opción debe implicar un enfoque distinto: observar, interactuar, moverse, arriesgar, recordar o protegerse.'
+        ].join(' ')
+      case 'inspection':
+        return [
+          'El jugador inspecciona la escena o un objeto.',
+          'Debes revelar al menos 2 detalles nuevos observables.',
+          'Esos detalles deben ayudar a entender función, peligro, origen, uso o estado.',
+          'No describas de nuevo el mismo decorado si no aporta descubrimiento.'
+        ].join(' ')
+      case 'movement':
+        return [
+          'El jugador se desplaza.',
+          'Muestra cómo cambia la escena y qué consecuencia inmediata produce ese movimiento.'
+        ].join(' ')
+      case 'interaction':
+        return [
+          'El jugador interactúa con alguien o algo.',
+          'Debes mostrar reacción, cambio perceptible o respuesta del entorno.'
+        ].join(' ')
+      case 'combat':
+        return [
+          'El jugador está actuando en combate.',
+          'Resuelve consecuencias inmediatas con claridad y sin ambigüedad.'
+        ].join(' ')
+      case 'decision':
+        return [
+          'El jugador tomó una decisión.',
+          'Confírmala dentro de la ficción y haz avanzar la escena con una consecuencia concreta.'
+        ].join(' ')
       default:
-        return "Haz avanzar la escena con información nueva, consecuencias visibles y una continuidad clara con el estado actual.";
+        return 'Haz avanzar la escena con información nueva, consecuencias visibles y continuidad clara.'
     }
-  })();
+  })()
 
   return [
-    "POLÍTICA DE DIRECCIÓN NARRATIVA",
-    "- No repitas ni parafrasees el último mensaje del GM salvo que añadas información realmente nueva.",
-    "- Cada respuesta debe avanzar al menos una dimensión: información, consecuencia, tensión, elección clara o resolución parcial.",
-    '- No cierres dos veces seguidas con la misma fórmula genérica del tipo "¿qué harás?".',
-    "- Si el jugador está confundido, guía dentro de la ficción en vez de devolver el mismo estímulo.",
-    "- Mantén la respuesta específica, situada y con detalles observables.",
+    'POLÍTICA DE DIRECCIÓN NARRATIVA',
+    '- No repitas ni parafrasees el último mensaje del GM salvo que añadas información realmente nueva.',
+    '- Cada respuesta debe contener novedad concreta, no solo atmósfera.',
+    '- No conviertas preguntas del jugador en eco del contexto.',
+    '- No conviertas inspecciones en recapitulación del decorado.',
+    '- No conviertas dudas en preguntas vacías del tipo "¿qué puede hacer?"',
+    '- Evita reusar el mismo foco visual o amenaza si no ha cambiado.',
+    '- Si mencionas un elemento ya introducido, añade una propiedad, riesgo, señal o consecuencia nueva.',
     modeInstruction,
     lastAssistantMessage
       ? `Último beat del GM que NO debes repetir: ${lastAssistantMessage}`
       : null,
     activeQuestSummary.length > 0
-      ? `Misiones activas relevantes: ${activeQuestSummary.join(" | ")}`
+      ? `Misiones activas relevantes: ${activeQuestSummary.join(' | ')}`
       : null,
     relationshipsSummary.length > 0
-      ? `Relaciones relevantes: ${relationshipsSummary.join(" | ")}`
+      ? `Relaciones relevantes: ${relationshipsSummary.join(' | ')}`
       : null,
   ]
     .filter(Boolean)
-    .join("\n");
+    .join('\n')
 }
 
 export function buildRuleRetrievalQuery(params: {
@@ -250,57 +293,63 @@ export function buildRuleRetrievalQuery(params: {
 }
 
 export function assessNarrativeQuality(params: {
-  narrative: string;
-  playerContent: string;
-  intentKind: PlayerIntentKind;
-  recentEvents: NarrativeEventLite[];
-  relevantRules: RuleMatchLite[];
+  narrative: string
+  playerContent: string
+  intentKind: PlayerIntentKind
+  recentEvents: NarrativeEventLite[]
+  relevantRules: RuleMatchLite[]
 }): NarrativeQualityAssessment {
-  const { narrative, playerContent, intentKind, recentEvents, relevantRules } = params;
-  const issues: string[] = [];
-  const trimmedNarrative = narrative.trim();
-  const lastAssistantMessage = getLastAssistantMessage(recentEvents);
-  const normalizedNarrative = normalizeText(trimmedNarrative);
-  const normalizedPlayerContent = normalizeText(playerContent);
+  const { narrative, playerContent, intentKind, recentEvents, relevantRules } = params
+  const issues: string[] = []
+  const trimmedNarrative = narrative.trim()
+  const lastAssistantMessage = getLastAssistantMessage(recentEvents)
+  const normalizedNarrative = normalizeText(trimmedNarrative)
+  const normalizedPlayerContent = normalizeText(playerContent)
 
-  if (trimmedNarrative.length < 80) {
-    issues.push("La respuesta narrativa es demasiado corta para una dirección de escena premium.");
+  if (trimmedNarrative.length < 100) {
+    issues.push('La respuesta narrativa es demasiado corta para una dirección de escena premium.')
   }
 
   if (lastAssistantMessage) {
-    const overlap = tokenOverlapRatio(trimmedNarrative, lastAssistantMessage);
-    if (overlap >= 0.72) {
-      issues.push("La respuesta se parece demasiado al último mensaje del GM.");
+    const overlap = tokenOverlapRatio(trimmedNarrative, lastAssistantMessage)
+    if (overlap >= 0.58) {
+      issues.push('La respuesta se parece demasiado al último mensaje del GM.')
     }
 
-    const repeatedOpening = firstWindow(trimmedNarrative);
+    const repeatedOpening = firstWindow(trimmedNarrative)
     if (repeatedOpening && repeatedOpening === firstWindow(lastAssistantMessage)) {
-      issues.push("La respuesta repite el mismo arranque del beat anterior.");
+      issues.push('La respuesta repite el mismo arranque del beat anterior.')
     }
   }
 
-  if (/que haras$|que harás$/.test(normalizedNarrative)) {
-    issues.push('La respuesta cierra con la fórmula genérica "¿qué harás?".');
+  if (/que puede hacer|que podria hacer|que podría hacer|que haras|que harás/.test(normalizedNarrative)) {
+    issues.push('La respuesta cierra con una fórmula vaga o genérica en vez de dirigir la escena.')
   }
 
-  if (intentKind === "hesitation" && !containsActionableOptions(trimmedNarrative)) {
-    issues.push("El jugador dudó y la respuesta no ofrece opciones claras dentro de la ficción.");
+  if (intentKind === 'hesitation') {
+    if (!containsActionableOptions(trimmedNarrative) && !containsDistinctOptions(trimmedNarrative)) {
+      issues.push('El jugador dudó y la respuesta no ofrece opciones claras dentro de la ficción.')
+    }
   }
 
-  if (intentKind === "inspection" && !containsSensoryLanguage(trimmedNarrative)) {
-    issues.push("La respuesta de inspección carece de detalles sensoriales o descubribles.");
+  if (intentKind === 'inspection') {
+    if (!containsSensoryLanguage(trimmedNarrative) && !containsDiscoveryLanguage(trimmedNarrative)) {
+      issues.push('La respuesta de inspección carece de detalles observables o descubribles.')
+    }
+
+    if (lastAssistantMessage && tokenOverlapRatio(trimmedNarrative, lastAssistantMessage) >= 0.5) {
+      issues.push('La inspección repite demasiado el beat anterior en vez de descubrir algo nuevo.')
+    }
   }
 
-  if (
-    intentKind === "question" &&
-    !containsConcreteAnswer(trimmedNarrative) &&
-    trimmedNarrative.endsWith("?")
-  ) {
-    issues.push("El jugador hizo una pregunta y la respuesta no aporta una aclaración concreta.");
+  if (intentKind === 'question') {
+    if (!containsConcreteAnswer(trimmedNarrative)) {
+      issues.push('El jugador hizo una pregunta y la respuesta no aporta una aclaración concreta.')
+    }
   }
 
   if (normalizedPlayerContent && normalizedNarrative === normalizedPlayerContent) {
-    issues.push("La respuesta repite el mensaje del jugador sin desarrollarlo.");
+    issues.push('La respuesta repite el mensaje del jugador sin desarrollarlo.')
   }
 
   if (relevantRules.length > 0) {
@@ -308,22 +357,22 @@ export function assessNarrativeQuality(params: {
       relevantRules
         .flatMap((rule) => words(rule.title).slice(0, 4))
         .filter((token) => token.length >= 4),
-    );
+    )
 
     if (
       normalizedRuleKeywords.length > 0 &&
       !normalizedRuleKeywords.some((token) => normalizedNarrative.includes(token))
     ) {
       issues.push(
-        "Había reglas recuperadas relevantes, pero la narración no refleja ninguna señal útil de ese contexto.",
-      );
+        'Había reglas recuperadas relevantes, pero la narración no refleja ninguna señal útil de ese contexto.',
+      )
     }
   }
 
   return {
     ok: issues.length === 0,
     issues,
-  };
+  }
 }
 
 export function buildNarrativeRepairPrompt(params: {
