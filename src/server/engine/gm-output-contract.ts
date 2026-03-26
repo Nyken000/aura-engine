@@ -58,8 +58,46 @@ export type ParsedGmStructuredOutput = {
 const FALLBACK_NARRATIVE =
     "La situación cambia, pero la salida estructurada del motor no pudo validarse del todo. Continúa con cautela.";
 
-const GM_OUTPUT_SCHEMA_EXAMPLE = `{
-  "narrative_response": "texto narrativo para el jugador",
+export const GM_OUTPUT_SCHEMA_EXAMPLE = `{
+  "narrative_response": "prosas narrativas vibrantes y reactivas...",
+  "state_changes": {
+    "hp_delta": -5,
+    "inventory_added": ["Daga de sombras"],
+    "inventory_removed": ["Antorcha gastada"]
+  },
+  "dice_roll_required": {
+    "needed": true,
+    "stat": "dex",
+    "skill": "stealth",
+    "dc": 14,
+    "reason": "Para intentar flanquear al guardia sin ser visto."
+  },
+  "combat": {
+    "start": false,
+    "end": false,
+    "participants": [],
+    "turn_index": 0,
+    "round": 1
+  },
+  "combat_events": {
+    "damage_applied": null,
+    "healing_applied": null,
+    "condition_applied": null,
+    "condition_removed": null,
+    "combat_ended": null
+  },
+  "semantic": {
+    "entities": [],
+    "quests": {
+      "upserts": [],
+      "updates": []
+    },
+    "relationships": [],
+    "companions": []
+  }
+}`;
+
+export const GM_STATE_SCHEMA_EXAMPLE = `{
   "state_changes": {
     "hp_delta": 0,
     "inventory_added": [],
@@ -583,29 +621,37 @@ function sanitizeNarrativeFallback(input: string): string {
 
 export function buildGmOutputFormatInstructions(): string {
     return [
-        "Debes devolver un único JSON válido con esta forma exacta:",
-        GM_OUTPUT_SCHEMA_EXAMPLE,
+        "Debes devolver EXACTAMENTE dos bloques y en este orden:",
+        "<narrative_response>",
+        "prosa narrativa final para el jugador",
+        "</narrative_response>",
+        "<state_json>",
+        GM_STATE_SCHEMA_EXAMPLE,
+        "</state_json>",
         "Reglas importantes:",
-        "- No escribas texto fuera del JSON.",
-        "- narrative_response es obligatorio y debe ser texto plano narrativo.",
-        "- narrative_response debe responder a la intención exacta del jugador, no solo continuar el ambiente general.",
-        "- No repitas el último beat ni reformules el estado actual sin aportar información nueva.",
-        "- Si el jugador pregunta qué es algo, debes identificarlo o acotarlo con claridad, describiendo su naturaleza, función, riesgo u origen de forma concreta.",
-        "- Si el jugador dice que no sabe qué hacer, debes ofrecer entre 2 y 4 opciones diegéticas claras, útiles y distintas entre sí, integradas en la ficción.",
-        "- Si el jugador mira, inspecciona o examina, debes revelar al menos 2 detalles nuevos observables de la escena que no sean mera repetición del decorado ya dicho.",
-        "- Si el jugador se acerca, toca o interactúa con algo, debes mostrar una consecuencia inmediata, reacción o cambio perceptible.",
-        "- No cierres por defecto con preguntas vacías o genéricas.",
-        "- No conviertas una observación del jugador en recapitulación pasiva de la escena.",
-        "- Evita repetir nombres, amenazas o elementos visuales si no hay información nueva asociada a ellos.",
+        "- No escribas texto fuera de esos bloques.",
+        "- narrative_response debe ser prosa narrativa viva, no resumen técnico.",
+        "- state_json debe ser JSON válido.",
+        "- No dupliques la prosa narrativa dentro del state_json.",
         "- state_changes, dice_roll_required y combat_events solo pueden contener datos estructurados válidos.",
         "- Si no corresponde un bloque, mantenlo como null o con valores vacíos válidos.",
         "- Si el jugador ya tiró dados y el resultado está indicado en el prompt, no pidas otra tirada para esa misma acción.",
         "- Si hay combate multijugador activo, respeta el estado compartido.",
         "- Solo avanza turno mediante consecuencia narrativa apropiada; el evento explícito lo persiste el backend.",
-        "- Si una regla del manual es relevante, refléjala de forma natural en la escena.",
+        "- Si una regla del manual es relevante, priorízala.",
         "- No inventes páginas ni cites reglas inexistentes.",
         "- Mantén consistencia con el historial reciente.",
+        "- Compatibilidad legacy: si fallas con el formato nuevo, el JSON completo también será aceptado como fallback.",
     ].join("\n");
+}
+
+function extractTaggedSection(tagName: string, text: string): string | null {
+    const pattern = new RegExp(`<${tagName}>([\\s\\S]*?)<\\/${tagName}>`, "i");
+    const match = text.match(pattern);
+    if (!match) return null;
+
+    const value = match[1]?.trim();
+    return value && value.length > 0 ? value : null;
 }
 
 export function normalizeDiceRollRequestForEvent(
@@ -626,13 +672,17 @@ export function normalizeDiceRollRequestForEvent(
 
 export function parseGmStructuredOutput(fullResponse: string): ParsedGmStructuredOutput {
     const validationErrors: string[] = [];
-    const rawJson = extractFirstJsonObject(fullResponse);
+
+    const taggedNarrative = extractTaggedSection("narrative_response", fullResponse);
+    const taggedStateJson = extractTaggedSection("state_json", fullResponse);
+
+    const rawJson = taggedStateJson ?? extractFirstJsonObject(fullResponse);
 
     if (!rawJson) {
         validationErrors.push("No se encontró un objeto JSON válido en la respuesta del GM.");
 
         return {
-            narrative: sanitizeNarrativeFallback(fullResponse),
+            narrative: taggedNarrative ?? sanitizeNarrativeFallback(fullResponse),
             stateChanges: null,
             diceRollRequired: null,
             combatUpdate: null,
@@ -651,7 +701,7 @@ export function parseGmStructuredOutput(fullResponse: string): ParsedGmStructure
         validationErrors.push("El objeto JSON del GM no pudo parsearse.");
 
         return {
-            narrative: sanitizeNarrativeFallback(fullResponse),
+            narrative: taggedNarrative ?? sanitizeNarrativeFallback(fullResponse),
             stateChanges: null,
             diceRollRequired: null,
             combatUpdate: null,
@@ -666,7 +716,7 @@ export function parseGmStructuredOutput(fullResponse: string): ParsedGmStructure
         validationErrors.push("La raíz del contrato del GM debe ser un objeto.");
 
         return {
-            narrative: sanitizeNarrativeFallback(fullResponse),
+            narrative: taggedNarrative ?? sanitizeNarrativeFallback(fullResponse),
             stateChanges: null,
             diceRollRequired: null,
             combatUpdate: null,
@@ -677,7 +727,9 @@ export function parseGmStructuredOutput(fullResponse: string): ParsedGmStructure
         };
     }
 
-    const narrative = asOptionalTrimmedString(parsed.narrative_response);
+    const narrative =
+        taggedNarrative ??
+        asOptionalTrimmedString(parsed.narrative_response);
 
     if (!narrative) {
         validationErrors.push("narrative_response es obligatorio.");
@@ -696,7 +748,7 @@ export function parseGmStructuredOutput(fullResponse: string): ParsedGmStructure
     const semantic = (parsed.semantic as NarrativeSemanticPayload) || null;
 
     return {
-        narrative: narrative ?? sanitizeNarrativeFallback(fullResponse),
+        narrative: narrative ?? taggedNarrative ?? sanitizeNarrativeFallback(fullResponse),
         stateChanges,
         diceRollRequired,
         combatUpdate,

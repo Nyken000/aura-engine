@@ -35,22 +35,10 @@ type InsertRow = {
 
 function createModelGatewayFromText(
     fullText: string,
-    chunkSize = 120,
 ): EngineStreamModelGateway {
     return {
-        async generateContentStream() {
-            async function* stream() {
-                for (let index = 0; index < fullText.length; index += chunkSize) {
-                    const chunk = fullText.slice(index, index + chunkSize);
-                    yield {
-                        text() {
-                            return chunk;
-                        },
-                    };
-                }
-            }
-
-            return stream();
+        async generateText() {
+            return fullText;
         },
     };
 }
@@ -450,7 +438,7 @@ test("stream runtime persists tactical events, character HP sync and shared part
 
     assert.equal(repository.narrativeEvents.length, 2);
     assert.equal(repository.narrativeEvents[0].event_type, "player_message");
-    assert.equal(repository.narrativeEvents[1].event_type, "gm_message");
+    assert.equal(repository.narrativeEvents[1].event_type, "narrative_update");
 
     assert.deepEqual(
         repository.tacticalRows.map((row) => row.event_type),
@@ -579,7 +567,7 @@ test("stream runtime requests dice roll when the model asks for it", async () =>
 
     assert.equal(repository.narrativeEvents.length, 2);
     const assistantEvent = repository.narrativeEvents[1];
-    assert.equal(assistantEvent.event_type, "gm_message");
+    assert.equal(assistantEvent.event_type, "narrative_update");
     assert.deepEqual(assistantEvent.dice_roll_required, {
         needed: true,
         stat: "dex",
@@ -1086,28 +1074,20 @@ test("stream runtime resolves persisted dice results without asking for another 
     let promptObserved = "";
 
     const modelGateway: EngineStreamModelGateway = {
-        async generateContentStream({ prompt }) {
+        async generateText({ prompt }) {
             promptObserved = prompt;
-            async function* stream() {
-                yield {
-                    text() {
-                        return JSON.stringify({
-                            narrative_response:
-                                "La ganzúa cede y la cerradura se abre con un clic seco.",
-                            state_changes: {
-                                hp_delta: 0,
-                                inventory_added: [],
-                                inventory_removed: [],
-                            },
-                            dice_roll_required: { needed: false },
-                            combat: null,
-                            combat_events: null,
-                        });
-                    },
-                };
-            }
-
-            return stream();
+            return JSON.stringify({
+                narrative_response:
+                    "La ganzúa cede y la cerradura se abre con un clic seco.",
+                state_changes: {
+                    hp_delta: 0,
+                    inventory_added: [],
+                    inventory_removed: [],
+                },
+                dice_roll_required: { needed: false },
+                combat: null,
+                combat_events: null,
+            });
         },
     };
 
@@ -1147,7 +1127,7 @@ test("stream runtime resolves persisted dice results without asking for another 
     });
 
     const assistantEvent = repository.narrativeEvents[1];
-    assert.equal(assistantEvent.event_type, "gm_message");
+    assert.equal(assistantEvent.event_type, "narrative_update");
     assert.equal(assistantEvent.dice_roll_required, null);
 });
 
@@ -1165,27 +1145,19 @@ test("stream runtime does not start model stream for explicit turn advancement m
     let called = false;
 
     const modelGateway: EngineStreamModelGateway = {
-        async generateContentStream() {
+        async generateText() {
             called = true;
-            async function* stream() {
-                yield {
-                    text() {
-                        return JSON.stringify({
-                            narrative_response: "No debería ejecutarse.",
-                            state_changes: {
-                                hp_delta: 0,
-                                inventory_added: [],
-                                inventory_removed: [],
-                            },
-                            dice_roll_required: { needed: false },
-                            combat: null,
-                            combat_events: null,
-                        });
-                    },
-                };
-            }
-
-            return stream();
+            return JSON.stringify({
+                narrative_response: "No debería ejecutarse.",
+                state_changes: {
+                    hp_delta: 0,
+                    inventory_added: [],
+                    inventory_removed: [],
+                },
+                dice_roll_required: { needed: false },
+                combat: null,
+                combat_events: null,
+            });
         },
     };
 
@@ -1214,7 +1186,7 @@ test("stream runtime emits model errors through SSE payload", async () => {
     });
 
     const modelGateway: EngineStreamModelGateway = {
-        async generateContentStream() {
+        async generateText() {
             throw new Error("Fallo del modelo");
         },
     };

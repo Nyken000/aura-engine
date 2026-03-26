@@ -24,26 +24,18 @@ import type {
     NarrativeSemanticPayload,
 } from "@/server/world/world-state-types";
 import {
-    buildGmOutputFormatInstructions,
     normalizeDiceRollRequestForEvent,
     parseGmStructuredOutput,
     type CombatUpdate,
+    GM_STATE_SCHEMA_EXAMPLE,
 } from "@/server/engine/gm-output-contract";
 import {
-    buildIntentAwareContent,
-    buildStructuredIntentPrompt,
-    deriveSemanticFromIntent,
-    mergeSemanticPayload,
-} from "@/server/engine/structured-intent-runtime";
-import {
-    assessNarrativeQuality,
-    buildNarrativeDirectorInstructions,
+    assessNarrativeProse,
+    buildNarrativePrompt,
     buildNarrativeRepairPrompt,
-    buildRuleRetrievalQuery,
-    inferPlayerIntentKind,
+    inferDirectorIntentKind,
     splitNarrativeForSse,
-    type PlayerIntentKind,
-} from "@/server/engine/narrative-response-policy";
+} from "@/server/engine/narrative-director";
 import {
     isStructuredIntent,
     type StructuredIntent,
@@ -207,14 +199,10 @@ export interface EngineStreamRepository {
     getSessionSnapshot(sessionId: string): Promise<{ quests: SessionQuestRow[]; relationships: NpcRelationshipRow[] }>;
 }
 
-export interface StreamModelChunk {
-    text(): string;
-}
-
 export interface EngineStreamModelGateway {
-    generateContentStream(params: {
+    generateText(params: {
         prompt: string;
-    }): Promise<AsyncIterable<StreamModelChunk>>;
+    }): Promise<string>;
 }
 
 
@@ -242,9 +230,7 @@ function buildPrompt(params: {
     sessionCombatState: SessionCombatStateRecord | null;
     relevantRules: RuleMatchRecord[];
     snapshot?: { quests: SessionQuestRow[]; relationships: NpcRelationshipRow[] } | null;
-    systemPrompt?: string;
     structuredIntent?: StructuredIntent | null;
-    inferredIntentKind: PlayerIntentKind;
 }): string {
     const {
         character,
@@ -254,75 +240,8 @@ function buildPrompt(params: {
         sessionCombatState,
         relevantRules,
         snapshot,
-        systemPrompt,
         structuredIntent,
-        inferredIntentKind,
     } = params;
-
-    const stats = character.stats || {};
-    const worldName = character.worlds?.name ?? "Mundo desconocido";
-    const worldDescription =
-        character.worlds?.description ?? "Sin descripción disponible";
-
-    const history = [...recentEvents]
-        .slice(-8)
-        .reverse()
-        .map((event) => `${event.role.toUpperCase()}: ${event.content}`)
-        .join("\n");
-
-    const playersBlock =
-        sessionPlayers.length > 0
-            ? sessionPlayers
-                .map((player) => {
-                    const char = player.characters;
-                    const username =
-                        player.profiles?.username || player.user_id || "jugador";
-                    return [
-                        `- ${char?.name ?? "Sin nombre"} (@${username})`,
-                        `  HP: ${char?.hp_current ?? "?"}/${char?.hp_max ?? "?"}`,
-                        `  Inventario: ${JSON.stringify(char?.inventory ?? [])}`,
-                        `  Stats: ${JSON.stringify(char?.stats ?? {})}`,
-                    ].join("\n");
-                })
-                .join("\n")
-            : "Sin otros jugadores en esta escena.";
-
-    const rulesBlock =
-        relevantRules.length > 0
-            ? relevantRules
-                .slice(0, 2)
-                .map((rule, index) => {
-                    const pages =
-                        rule.page_from || rule.page_to
-                            ? ` (páginas ${rule.page_from ?? "?"}-${rule.page_to ?? "?"})`
-                            : "";
-                    const similarity =
-                        typeof rule.similarity === "number"
-                            ? ` | similitud ${rule.similarity.toFixed(3)}`
-                            : "";
-
-                    return `Regla ${index + 1}: ${rule.title}${pages}${similarity}\n${rule.content}`;
-                })
-                .join("\n\n")
-            : "No hay fragmentos de manual relevantes recuperados.";
-
-    const snapshotBlock = snapshot
-        ? [
-              "ESTADO DEL MUNDO (Snapshot)",
-              "Misiones:",
-              snapshot.quests.length > 0
-                  ? snapshot.quests
-                        .map((q: SessionQuestRow) => `- [${q.status}] ${q.title} (${q.slug})`)
-                        .join("\n")
-                  : "  Sin misiones activas.",
-              "Relaciones:",
-              snapshot.relationships.length > 0
-                  ? snapshot.relationships
-                        .map((r: NpcRelationshipRow) => `- ${r.npc_name}: Afinidad=${r.affinity}, Confianza=${r.trust}`)
-                        .join("\n")
-                  : "  Sin relaciones significativas.",
-          ].join("\n")
-        : "";
 
     const combatStateLabel = sessionCombatState
         ? JSON.stringify(
@@ -336,140 +255,54 @@ function buildPrompt(params: {
             null,
             2,
         )
-        : JSON.stringify(currentCombatToPromptState(null, character.combat_state as unknown as CombatState), null, 2);
-
-    const directorInstructions = buildNarrativeDirectorInstructions({
-        intentKind: inferredIntentKind,
-        recentEvents,
-        snapshot: snapshot ?? null,
-    });
-
-    return `
-Eres Aura, una game master de RPG multijugador con narrativa premium, consistente y estructurada.
-Responde SIEMPRE en español.
-${systemPrompt || buildGmOutputFormatInstructions()}
-
-MUNDO
-Nombre: ${worldName}
-Descripción: ${worldDescription}
-
-PERSONAJE ACTIVO
-Nombre: ${character.name}
-HP: ${character.hp_current}/${character.hp_max}
-Inventario: ${JSON.stringify(character.inventory ?? [])}
-Stats: ${JSON.stringify(stats, null, 2)}
-
-JUGADORES EN SESIÓN
-${playersBlock}
-
-ESTADO DE COMBATE
-${combatStateLabel}
-
-${snapshotBlock}
-
-REGLAS RECUPERADAS DESDE MANUALES
-${rulesBlock}
-
-HISTORIAL RECIENTE
-${history || "Sin historial reciente."}
-
-POLÍTICA DE DIRECCIÓN
-${directorInstructions}
-
-${buildStructuredIntentPrompt(structuredIntent ?? null) || ""}
-
-MENSAJE DEL JUGADOR
-${contentForModel}
-`.trim();
-}
-
-async function collectModelResponse(
-    modelGateway: EngineStreamModelGateway,
-    prompt: string,
-): Promise<string> {
-    const result = await modelGateway.generateContentStream({ prompt });
-    let fullResponse = "";
-
-    for await (const chunk of result) {
-        const text = chunk.text();
-        if (text) {
-            fullResponse += text;
-        }
-    }
-
-    return fullResponse;
-}
-
-async function generateValidatedGmResponse(params: {
-    modelGateway: EngineStreamModelGateway;
-    prompt: string;
-    playerContent: string;
-    inferredIntentKind: PlayerIntentKind;
-    recentEvents: NarrativeEventRow[];
-    relevantRules: RuleMatchRecord[];
-    logger?: EngineStreamLogger;
-    allowRetry?: boolean;
-}): Promise<ReturnType<typeof parseGmStructuredOutput>> {
-    const {
-        modelGateway,
-        prompt,
-        playerContent,
-        inferredIntentKind,
-        recentEvents,
-        relevantRules,
-        logger,
-        allowRetry = false,
-    } = params;
-
-    let activePrompt = prompt;
-    let fallbackParsed: ReturnType<typeof parseGmStructuredOutput> | null = null;
-    const maxAttempts = allowRetry ? 2 : 1;
-
-    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-        const fullResponse = await collectModelResponse(modelGateway, activePrompt);
-        const parsed = parseGmStructuredOutput(fullResponse);
-        const quality = assessNarrativeQuality({
-            narrative: parsed.narrative,
-            playerContent,
-            intentKind: inferredIntentKind,
-            recentEvents,
-            relevantRules,
-        });
-
-        const issues = [...parsed.validationErrors, ...quality.issues];
-        if (issues.length === 0) {
-            return parsed;
-        }
-
-        logger?.('gm_quality_retry', {
-            attempt,
-            issues,
-        });
-
-        fallbackParsed = parsed;
-        activePrompt = buildNarrativeRepairPrompt({
-            originalPrompt: prompt,
-            rawResponse: fullResponse,
-            issues,
-        });
-    }
-
-    return fallbackParsed ?? parseGmStructuredOutput('');
-}
-
-function enqueueNarrativeChunks(params: {
-    controller: ReadableStreamDefaultController<Uint8Array>;
-    encoder: TextEncoder;
-    narrative: string;
-}) {
-    const { controller, encoder, narrative } = params;
-
-    for (const part of splitNarrativeForSse(narrative)) {
-        controller.enqueue(
-            encoder.encode(`data: ${JSON.stringify({ chunk: part })}\n\n`),
+        : JSON.stringify(
+            currentCombatToPromptState(
+                null,
+                character.combat_state as unknown as CombatState,
+            ),
+            null,
+            2,
         );
-    }
+
+    return buildNarrativePrompt({
+        character: {
+            name: character.name,
+            hp_current: character.hp_current,
+            hp_max: character.hp_max,
+            inventory: character.inventory ?? [],
+            stats: (character.stats as Record<string, unknown>) ?? {},
+            world: {
+                name: character.worlds?.name ?? null,
+                description: character.worlds?.description ?? null,
+            },
+        },
+        contentForModel,
+        recentEvents: recentEvents.map((event) => ({
+            role: event.role,
+            content: event.content,
+        })),
+        sessionPlayers: sessionPlayers.map((player) => ({
+            name: player.characters?.name ?? "Sin nombre",
+            username: player.profiles?.username ?? null,
+            hp_current: player.characters?.hp_current ?? null,
+            hp_max: player.characters?.hp_max ?? null,
+        })),
+        relevantRules: relevantRules.map((rule) => ({
+            title: rule.title,
+            content: rule.content,
+            page_from: rule.page_from ?? null,
+            page_to: rule.page_to ?? null,
+        })),
+        snapshot: snapshot ?? null,
+        structuredIntent: structuredIntent ?? null,
+        combatStateLabel,
+        stateSchemaExample: GM_STATE_SCHEMA_EXAMPLE,
+    });
 }
+
+// Removed collectModelResponse and generateValidatedGmResponse as they are replaced by inline logic in processEngineStream
+
+
 
 function parseDiceResultMarker(content: string): DiceRollOutcome | null {
     const match = content.match(/\[DICE_RESULT:\s*([^\]]+)\]/i);
@@ -677,7 +510,7 @@ export async function processEngineStream(params: {
 
     const normalizedIntent = isStructuredIntent(body.intent) ? body.intent : null;
     const { characterId, sessionId, clientEventId, channel } = body;
-    const content = buildIntentAwareContent({ content: body.content, intent: normalizedIntent });
+    const content = body.content || "";
 
     if (!characterId || !content) {
         return Response.json({ error: "Faltan parámetros" }, { status: 400 });
@@ -731,10 +564,6 @@ export async function processEngineStream(params: {
     const contentForModel = parsedDiceResult
         ? buildDiceResolutionPrompt(parsedDiceResult)
         : content;
-    const inferredIntentKind = inferPlayerIntentKind({
-        content,
-        structuredIntent: normalizedIntent,
-    });
 
     logger?.("data_fetching_start");
     const start = Date.now();
@@ -754,14 +583,7 @@ export async function processEngineStream(params: {
                 : Promise.resolve(null),
         ]);
 
-    const ruleRetrievalQuery = buildRuleRetrievalQuery({
-        playerContent: contentForModel,
-        intentKind: inferredIntentKind,
-        recentEvents,
-        snapshot,
-        worldName: character.worlds?.name ?? null,
-    });
-    const relevantRules = await repository.searchRelevantRules(ruleRetrievalQuery);
+    const relevantRules = await repository.searchRelevantRules(contentForModel);
     logger?.("data_fetching_end", {
         durationMs: Date.now() - start,
         eventsCount: recentEvents.length,
@@ -769,7 +591,6 @@ export async function processEngineStream(params: {
         hasCombatState: !!sessionCombatState,
         rulesCount: relevantRules.length,
         sessionScoped: Boolean(joinedSessionMembership),
-        inferredIntentKind,
     });
 
     const currentCombatState = currentCombatToPromptState(
@@ -897,39 +718,55 @@ export async function processEngineStream(params: {
         return Response.json({ ok: true, system_only: true });
     }
 
-    const gmInstructions = buildGmOutputFormatInstructions();
-    const fullSystemPrompt = [
-        gmInstructions,
-        buildStructuredIntentPrompt(normalizedIntent ?? null),
-    ].filter(Boolean).join("\n\n");
-
     const encoder = new TextEncoder();
     const assistantClientEventId = randomUUID();
+    const intentKind = inferDirectorIntentKind({
+        content,
+        structuredIntent: normalizedIntent,
+    });
 
     const stream = new ReadableStream({
         async start(controller) {
             try {
-                const parsedOutput = await generateValidatedGmResponse({
-                    modelGateway,
-                    prompt: buildPrompt({
-                        character,
-                        contentForModel,
-                        recentEvents,
-                        sessionPlayers,
-                        sessionCombatState,
-                        relevantRules,
-                        snapshot,
-                        systemPrompt: fullSystemPrompt,
-                        structuredIntent: normalizedIntent,
-                        inferredIntentKind,
-                    }),
-                    playerContent: content,
-                    inferredIntentKind,
+                controller.enqueue(
+                    encoder.encode(`data: ${JSON.stringify({ status: "thinking" })}\n\n`),
+                );
+
+                const narrativePrompt = buildPrompt({
+                    character,
+                    contentForModel,
                     recentEvents,
+                    sessionPlayers,
+                    sessionCombatState,
                     relevantRules,
-                    logger,
-                    allowRetry: process.env.VERCEL_ENV !== 'production',
+                    snapshot,
+                    structuredIntent: normalizedIntent,
                 });
+
+                let fullResponse = await modelGateway.generateText({
+                    prompt: narrativePrompt,
+                });
+
+                let parsed = parseGmStructuredOutput(fullResponse);
+
+                const proseAssessment = assessNarrativeProse({
+                    narrative: parsed.narrative,
+                    playerContent: content,
+                    recentEvents,
+                    intentKind,
+                });
+
+                if (!proseAssessment.ok && process.env.NODE_ENV !== "production") {
+                    fullResponse = await modelGateway.generateText({
+                        prompt: buildNarrativeRepairPrompt({
+                            originalPrompt: narrativePrompt,
+                            narrative: parsed.narrative,
+                            issues: proseAssessment.issues,
+                        }),
+                    });
+
+                    parsed = parseGmStructuredOutput(fullResponse);
+                }
 
                 const {
                     narrative,
@@ -939,22 +776,23 @@ export async function processEngineStream(params: {
                     combatEventResolution,
                     semantic: gmSemantic,
                     validationErrors,
-                } = parsedOutput;
+                } = parsed;
 
                 if (validationErrors.length > 0) {
                     console.warn("GM output contract validation issues:", validationErrors);
                 }
 
-                enqueueNarrativeChunks({
-                    controller,
-                    encoder,
-                    narrative,
-                });
-
-                const resolvedSemantic = mergeSemanticPayload(
-                    gmSemantic,
-                    deriveSemanticFromIntent(normalizedIntent),
+                controller.enqueue(
+                    encoder.encode(`data: ${JSON.stringify({ status: "narrating" })}\n\n`),
                 );
+
+                for (const part of splitNarrativeForSse(narrative)) {
+                    controller.enqueue(
+                        encoder.encode(`data: ${JSON.stringify({ chunk: part })}\n\n`),
+                    );
+                }
+
+                const resolvedSemantic = gmSemantic;
 
                 let newHp = character.hp_current ?? character.hp_max;
                 const inventory = safeArray(character.inventory).map((item) => ({

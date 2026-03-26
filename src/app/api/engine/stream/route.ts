@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
-import { streamAiText } from '@/lib/ai/provider'
+import { generateAiText } from '@/lib/ai/provider'
 import type {
   SessionCombatParticipant,
   SessionCombatStateRecord,
@@ -37,20 +37,10 @@ function logStreamEvent(message: string, payload?: Record<string, unknown>) {
 
 function createOllamaModelGateway(): EngineStreamModelGateway {
   return {
-    async generateContentStream({ prompt }) {
-      async function* stream() {
-        for await (const chunk of streamAiText({
-          prompt,
-        })) {
-          yield {
-            text() {
-              return chunk
-            },
-          }
-        }
-      }
-
-      return stream()
+    async generateText({ prompt }) {
+      return generateAiText({
+        prompt,
+      })
     },
   }
 }

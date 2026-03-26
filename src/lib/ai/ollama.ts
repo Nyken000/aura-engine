@@ -27,11 +27,11 @@ type OllamaRequestOptions = {
 const DEFAULT_BASE_URL = 'http://127.0.0.1:11434'
 const DEFAULT_MODEL = 'llama3'
 const DEFAULT_EMBED_MODEL = 'embeddinggemma'
-const DEFAULT_NARRATIVE_TEMPERATURE = 0.72
+const DEFAULT_NARRATIVE_TEMPERATURE = 0.78
 const DEFAULT_STRUCTURED_TEMPERATURE = 0.05
 const DEFAULT_NARRATIVE_TOP_P = 0.92
-const DEFAULT_STRUCTURED_TOP_P = 0.3
-const DEFAULT_NARRATIVE_REPEAT_PENALTY = 1.08
+const DEFAULT_STRUCTURED_TOP_P = 0.25
+const DEFAULT_NARRATIVE_REPEAT_PENALTY = 1.1
 
 function getRequiredEnv(name: string, fallback?: string): string {
     const value = process.env[name] ?? fallback
