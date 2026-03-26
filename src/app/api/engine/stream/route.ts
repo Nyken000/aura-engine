@@ -41,7 +41,6 @@ function createOllamaModelGateway(): EngineStreamModelGateway {
       async function* stream() {
         for await (const chunk of streamAiText({
           prompt,
-          temperature: 0.2,
         })) {
           yield {
             text() {

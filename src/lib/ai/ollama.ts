@@ -18,9 +18,20 @@ type OllamaEmbedResponse = {
     embeddings?: number[][]
 }
 
+type OllamaRequestOptions = {
+    temperature?: number
+    top_p?: number
+    repeat_penalty?: number
+}
+
 const DEFAULT_BASE_URL = 'http://127.0.0.1:11434'
 const DEFAULT_MODEL = 'llama3'
 const DEFAULT_EMBED_MODEL = 'embeddinggemma'
+const DEFAULT_NARRATIVE_TEMPERATURE = 0.72
+const DEFAULT_STRUCTURED_TEMPERATURE = 0.05
+const DEFAULT_NARRATIVE_TOP_P = 0.92
+const DEFAULT_STRUCTURED_TOP_P = 0.3
+const DEFAULT_NARRATIVE_REPEAT_PENALTY = 1.08
 
 function getRequiredEnv(name: string, fallback?: string): string {
     const value = process.env[name] ?? fallback
@@ -31,6 +42,14 @@ function getRequiredEnv(name: string, fallback?: string): string {
     return value
 }
 
+function parseOptionalNumberEnv(name: string): number | undefined {
+    const raw = process.env[name]?.trim()
+    if (!raw) return undefined
+
+    const parsed = Number(raw)
+    return Number.isFinite(parsed) ? parsed : undefined
+}
+
 export function getOllamaBaseUrl(): string {
     return getRequiredEnv('OLLAMA_BASE_URL', DEFAULT_BASE_URL).replace(/\/$/, '')
 }
@@ -39,8 +58,31 @@ export function getOllamaModel(): string {
     return getRequiredEnv('OLLAMA_MODEL', DEFAULT_MODEL)
 }
 
+export function getOllamaNarrativeModel(): string {
+    return getRequiredEnv('OLLAMA_NARRATIVE_MODEL', getOllamaModel())
+}
+
+export function getOllamaStructuredModel(): string {
+    return getRequiredEnv('OLLAMA_STRUCTURED_MODEL', getOllamaModel())
+}
+
 export function getOllamaEmbedModel(): string {
     return getRequiredEnv('OLLAMA_EMBED_MODEL', DEFAULT_EMBED_MODEL)
+}
+
+export function getOllamaNarrativeTemperature(): number {
+    return (
+        parseOptionalNumberEnv('OLLAMA_NARRATIVE_TEMPERATURE') ??
+        parseOptionalNumberEnv('OLLAMA_TEMPERATURE') ??
+        DEFAULT_NARRATIVE_TEMPERATURE
+    )
+}
+
+export function getOllamaStructuredTemperature(): number {
+    return (
+        parseOptionalNumberEnv('OLLAMA_STRUCTURED_TEMPERATURE') ??
+        DEFAULT_STRUCTURED_TEMPERATURE
+    )
 }
 
 function buildOllamaHeaders(): HeadersInit {
@@ -63,6 +105,27 @@ function buildOllamaHeaders(): HeadersInit {
     }
 
     return headers
+}
+
+function buildNarrativeOptions(temperature?: number): OllamaRequestOptions {
+    return {
+        temperature: temperature ?? getOllamaNarrativeTemperature(),
+        top_p:
+            parseOptionalNumberEnv('OLLAMA_NARRATIVE_TOP_P') ??
+            DEFAULT_NARRATIVE_TOP_P,
+        repeat_penalty:
+            parseOptionalNumberEnv('OLLAMA_NARRATIVE_REPEAT_PENALTY') ??
+            DEFAULT_NARRATIVE_REPEAT_PENALTY,
+    }
+}
+
+function buildStructuredOptions(temperature?: number): OllamaRequestOptions {
+    return {
+        temperature: temperature ?? getOllamaStructuredTemperature(),
+        top_p:
+            parseOptionalNumberEnv('OLLAMA_STRUCTURED_TOP_P') ??
+            DEFAULT_STRUCTURED_TOP_P,
+    }
 }
 
 async function ollamaFetch(path: string, body: Record<string, unknown>): Promise<Response> {
@@ -88,13 +151,11 @@ export async function generateText(params: {
     temperature?: number
 }): Promise<string> {
     const response = await ollamaFetch('/api/generate', {
-        model: params.model ?? getOllamaModel(),
+        model: params.model ?? getOllamaNarrativeModel(),
         prompt: params.prompt,
         system: params.system,
         stream: false,
-        options: {
-            temperature: params.temperature ?? 0.2,
-        },
+        options: buildNarrativeOptions(params.temperature),
     })
 
     const payload = (await response.json()) as { response?: string }
@@ -108,13 +169,11 @@ export async function generateChatJson(params: {
     format?: 'json' | Record<string, unknown>
 }): Promise<string> {
     const response = await ollamaFetch('/api/chat', {
-        model: params.model ?? getOllamaModel(),
+        model: params.model ?? getOllamaStructuredModel(),
         messages: params.messages,
         stream: false,
         format: params.format ?? 'json',
-        options: {
-            temperature: params.temperature ?? 0,
-        },
+        options: buildStructuredOptions(params.temperature),
     })
 
     const payload = (await response.json()) as OllamaChatResponse
@@ -128,13 +187,11 @@ export async function* streamGenerateText(params: {
     temperature?: number
 }): AsyncGenerator<string> {
     const response = await ollamaFetch('/api/generate', {
-        model: params.model ?? getOllamaModel(),
+        model: params.model ?? getOllamaNarrativeModel(),
         prompt: params.prompt,
         system: params.system,
         stream: true,
-        options: {
-            temperature: params.temperature ?? 0.2,
-        },
+        options: buildNarrativeOptions(params.temperature),
     })
 
     if (!response.body) {
